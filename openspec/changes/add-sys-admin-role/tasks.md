@@ -657,3 +657,12 @@ Implementation:
 - [x] 14.51.5 [src/App.jsx](../../../src/App.jsx) — modal 2 bước: choice (hôm nay / ngày mai) ↔ confirm (đã xuất bến chưa, nút "Chưa" quay lại choice).
 - [x] 14.51.6 Build check pass.
 
+### 14.52 Bill in — 2 bản giống hệt nhau + ký giao/ký nhận
+
+Vấn đề (verbatim): "xem bill in bỏ phần bill in cho chành xe đi, bill của chành xe và của khách giữ, 2 bản như nhau. ở dưới section ghi chú, bên trái thêm kí giao, bên phải là kí nhận (Ghi rõ họ tên)".
+
+Implementation:
+- [x] 14.52.1 [src/App.jsx](../../../src/App.jsx) — bỏ section riêng "Xác nhận nhận hàng (chành xe lưu)"; `renderBillCopy` không còn tham số `isDepotCopy`, 2 bản (khách giữ + chành xe giữ) render giống hệt nhau.
+- [x] 14.52.2 [src/App.jsx](../../../src/App.jsx) — dưới section "Ghi chú": thêm 2 cột ký — trái "Kí giao", phải "Kí nhận", mỗi cột có "(Ghi rõ họ tên)".
+- [x] 14.52.3 Build check pass.
+

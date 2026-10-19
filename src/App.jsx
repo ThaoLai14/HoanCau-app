@@ -4335,9 +4335,8 @@ return (
         isHomeDelivery, deliveryAddress, selfPacked, riskWarning, exportVat,
         orderNote, requireIdCheck,
       };
-      // Nội dung 1 bản bill — dùng chung cho bản khách giữ + bản chành xe giữ.
-      // isDepotCopy=true → thêm section ký nhận ở cuối (chỉ bản chành xe cần lưu vết giao nhận).
-      const renderBillCopy = (isDepotCopy) => (
+      // Nội dung 1 bản bill — 2 bản (khách giữ + chành xe giữ) giống hệt nhau.
+      const renderBillCopy = () => (
         <div className="bill-copy space-y-3">
           {/* Company Header — đứng ngoài watermark để làm mốc canh vị trí logo cố định, giống nhau ở cả 2 bản */}
           <div className="text-center border-b-2 border-gray-800 pb-4">
@@ -4442,23 +4441,19 @@ return (
             </ul>
           </div>
 
-          {/* Bản chành xe giữ: thêm section ký nhận khi khách tới lấy hàng */}
-          {isDepotCopy && (
-            <div className="border-t-2 border-gray-800 pt-3 mt-4 text-xs space-y-3">
-              <p className="font-bold text-sm">Xác nhận nhận hàng (chành xe lưu):</p>
-              <div className="grid grid-cols-2 gap-3">
-                <p><span className="font-bold">Ngày nhận:</span> ____ / ____ / ________</p>
-                <p><span className="font-bold">Người nhận:</span></p>
+          {/* Ký giao / ký nhận — hiện ở cả 2 bản (khách giữ + chành xe giữ) */}
+          <div className="border-t-2 border-gray-800 pt-3 mt-4 text-xs">
+            <div className="grid grid-cols-2 gap-3 text-center">
+              <div>
+                <p className="font-bold">Kí giao</p>
+                <p className="text-[11px] text-gray-600 mt-10">(Ghi rõ họ tên)</p>
               </div>
-              <div className="grid grid-cols-2 gap-3 pt-4">
-                <div>
-                  <p className="font-bold">Chữ ký người nhận:</p>
-                  <p className="text-[11px] text-gray-600 mt-8">(Ghi rõ họ tên)</p>
-                </div>
-                <p><span className="font-bold">SĐT:</span></p>
+              <div>
+                <p className="font-bold">Kí nhận</p>
+                <p className="text-[11px] text-gray-600 mt-10">(Ghi rõ họ tên)</p>
               </div>
             </div>
-          )}
+          </div>
             </div>
           </div>
         </div>
@@ -4505,11 +4500,11 @@ return (
               }
             `}</style>
 
-            {renderBillCopy(false)}
+            {renderBillCopy()}
 
             <div className="border-t-4 border-dashed border-gray-300 my-6" />
 
-            {renderBillCopy(true)}
+            {renderBillCopy()}
           </div>
 
           {/* Footer Buttons */}
