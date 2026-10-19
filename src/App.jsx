@@ -4445,12 +4445,12 @@ return (
           <div className="border-t-2 border-gray-800 pt-3 mt-4 text-xs">
             <div className="grid grid-cols-2 gap-3 text-center">
               <div>
-                <p className="font-bold">Kí giao</p>
-                <p className="text-[11px] text-gray-600 mt-10">(Ghi rõ họ tên)</p>
+                <p className="font-bold">Ký giao</p>
+                <p className="text-[11px] text-gray-600">(Ghi rõ họ tên)</p>
               </div>
               <div>
-                <p className="font-bold">Kí nhận</p>
-                <p className="text-[11px] text-gray-600 mt-10">(Ghi rõ họ tên)</p>
+                <p className="font-bold">Ký nhận</p>
+                <p className="text-[11px] text-gray-600">(Ghi rõ họ tên)</p>
               </div>
             </div>
           </div>
