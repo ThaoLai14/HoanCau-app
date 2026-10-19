@@ -604,15 +604,16 @@ Implementation:
 ### 14.48 Tạo đơn — đơn giao tận nơi bắt buộc thanh toán trước
 
 Vấn đề (verbatim): "ở flow tạo đơn hàng, thêm 1 rule là: đối với đơn giao tận nơi bắt buộc thanh toán trước."
+Chỉnh (verbatim): "ko dc tự động tick thanh toán đâu, lỡ user quên thì sao. chuyển field đã thanh toán thành required thôi, nếu chọn giao tận nơi mà k chọn đã thanh toán thì báo lỗi."
 
 Rule nghiệp vụ:
-- Đơn có tích "Có giao tận nơi" → bắt buộc "Đã thanh toán" (thu tiền trước khi giao).
+- Đơn có tích "Có giao tận nơi" → "Đã thanh toán" trở thành **required**. KHÔNG auto-tick (tránh user quên mà vẫn tạo được) — bắt user tự tích.
+- Nếu giao tận nơi mà chưa tích "Đã thanh toán" → báo lỗi, chặn tạo đơn.
 - Ngoại lệ: đơn **miễn phí** (không có gì để thu) → coi như thỏa, cho tạo.
-- Đơn **báo giá cước sau** (chưa biết cước, không thu được) → không cho kết hợp với giao tận nơi; phải bỏ "Báo giá cước sau" để nhập cước và thu tiền.
+- Đơn **báo giá cước sau** (chưa biết cước, không thu được) → không cho kết hợp; phải bỏ "Báo giá cước sau" để nhập cước và thu tiền.
 
 Implementation:
-- [x] 14.48.1 [src/App.jsx](../../../src/App.jsx) — khi tích "Có giao tận nơi" (và không miễn phí / không báo giá sau) → tự `setIsPaidImmediately(true)`.
-- [x] 14.48.2 [src/App.jsx](../../../src/App.jsx) — checkbox "Đã thanh toán" tự tích + khóa (disabled) khi đang giao tận nơi (không miễn phí/báo giá sau); label phụ "(bắt buộc — giao tận nơi)".
-- [x] 14.48.3 [src/App.jsx](../../../src/App.jsx) — `handleStartCreateBill`: safety-net validate `isHomeDelivery && !isPaidImmediately && !isFreeShipping` → toast chặn; nếu `feeQuoteLater` thì gợi ý bỏ "Báo giá cước sau".
-- [x] 14.48.4 Build check pass.
+- [x] 14.48.1 [src/App.jsx](../../../src/App.jsx) — `handleStartCreateBill`: validate `isHomeDelivery && !isPaidImmediately && !isFreeShipping` → toast chặn; nếu `feeQuoteLater` thì gợi ý bỏ "Báo giá cước sau".
+- [x] 14.48.2 [src/App.jsx](../../../src/App.jsx) — label "Đã thanh toán" hiện dấu `*` khi đang giao tận nơi (không miễn phí/báo giá sau) để báo bắt buộc; KHÔNG auto-tick, KHÔNG khóa — user tự tích.
+- [x] 14.48.3 Build check pass.
 
