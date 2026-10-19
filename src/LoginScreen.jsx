@@ -15,30 +15,48 @@ export default function LoginScreen({ onLogin }) {
     try {
       const uname = username.trim().toLowerCase();
       if (!uname) throw new Error("Vui lòng nhập tên đăng nhập");
+      const email = `${uname}@hoancau.internal`;
 
-      // 1. Lấy user theo username (join branches để có branch_code)
-      const { data: user, error } = await supabase
-        .from("users")
-        .select("id, username, password_hash, full_name, role, branch_id, branches(branch_code)")
-        .eq("username", uname)
-        .maybeSingle();
-
-      if (error) throw error;
-      if (!user) throw new Error("Tên đăng nhập hoặc mật khẩu không đúng");
-
-      // 2. So sánh mật khẩu (plain text theo schema hiện tại)
-      if (user.password_hash !== password) {
+      // 1. Đăng nhập qua Supabase Auth (JWT + bcrypt server-side)
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+      if (authError) {
+        // Không tiết lộ user tồn tại hay không → luôn thông báo generic
         throw new Error("Tên đăng nhập hoặc mật khẩu không đúng");
       }
 
-      // 3. Trả session lên App
+      // 2. Fetch profile từ public.profiles (RLS cho phép user đọc profile của mình)
+      const authUserId = authData.user?.id;
+      if (!authUserId) throw new Error("Đăng nhập lỗi: không có user id");
+
+      const { data: profile, error: profileError } = await supabase
+        .from("profiles")
+        .select("id, username, full_name, role, branch_id, is_disabled, is_deleted, branches(branch_code)")
+        .eq("id", authUserId)
+        .maybeSingle();
+
+      if (profileError) throw profileError;
+      if (!profile) {
+        // Auth user tồn tại nhưng thiếu profile → trigger fail hoặc metadata sai
+        await supabase.auth.signOut();
+        throw new Error("Tài khoản chưa được cấu hình. Liên hệ quản trị viên.");
+      }
+      // Chặn user bị disabled/deleted không đăng nhập được
+      if (profile.is_disabled || profile.is_deleted) {
+        await supabase.auth.signOut();
+        throw new Error("Tài khoản của bạn đã bị vô hiệu hóa. Liên hệ quản trị viên.");
+      }
+
+      // 3. Trả session lên App (giữ shape cũ để tối thiểu diff)
       onLogin({
-        id: user.id,
-        username: user.username,
-        full_name: user.full_name,
-        role: user.role,
-        branch_id: user.branch_id,
-        branch_code: user.branches?.branch_code || "SG",
+        id: profile.id,
+        username: profile.username,
+        full_name: profile.full_name,
+        role: profile.role,
+        branch_id: profile.branch_id,
+        branch_code: profile.branches?.branch_code || "SG",
       });
     } catch (err) {
       setErrMsg(err.message || "Có lỗi xảy ra");

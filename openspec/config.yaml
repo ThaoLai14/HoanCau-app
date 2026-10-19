@@ -1,0 +1,48 @@
+schema: spec-driven
+
+context: |
+  Domain: Chành xe (small-truck freight) management for the Sài Gòn ⇄ Gia Lai route.
+  Two branches: SG (Sài Gòn) and GL (Gia Lai). Each branch dispatches one truck per day
+  ("chuyến"). After a truck departs ("Xuất Bến"), any new shipment is counted toward
+  the NEXT day's trip — even if it was created later the same calendar day.
+
+  Tech stack:
+  - Frontend: React 19 + Vite 8 + Tailwind 3 (single-page app, no router, no TypeScript).
+  - Backend: Supabase (PostgreSQL + @supabase/supabase-js v2) called directly from the
+    browser. No Node server. RLS posture is unverified.
+  - Auth: custom — `public.users` table, password compared plaintext against
+    `users.password_hash` in `src/LoginScreen.jsx`. Session in `localStorage['hc_session']`.
+  - Schema migrations are ad-hoc `.sql` files at repo root (no migration framework).
+
+  Code layout:
+  - `src/App.jsx` (~3,750 lines) holds the entire UI and all business logic.
+  - `src/ClientAutocomplete.jsx` — single-input autocomplete that matches against both
+    fullname and any phone number on `clients` + `client_phones`.
+  - `src/supabaseClient.js` — one anon client built from VITE_SUPABASE_URL /
+    VITE_SUPABASE_ANON_KEY.
+
+  Roles: `admin` (full operational power), `member` (intake + delivery; cannot edit/cancel
+  pending bills, cannot manage clients except creating new ones during intake, cannot view
+  revenue), `boss` (CEO, observer/read-only across all tabs).
+
+  Language: business descriptions in specs are written in Vietnamese; code identifiers,
+  field names, status enums and SQL stay in English.
+
+  Conventions when writing OpenSpec artifacts here:
+  - Use SHALL / MUST for normative requirements.
+  - Reference column names in backticks exactly as they appear in `bills`, `clients`,
+    `client_phones`, `bill_payment_details`, `expenses`, `users`, `branches`.
+  - Status enums to use verbatim: payment_status ∈ {paid, unpaid, free};
+    delivery_status ∈ {pending, delivered, draft, cancelled}.
+  - Soft-delete flag everywhere is `is_delete BOOLEAN`.
+  - Capability spec folders use kebab-case under `openspec/specs/`.
+
+# Per-artifact rules (optional)
+# Add custom rules for specific artifacts.
+# Example:
+#   rules:
+#     proposal:
+#       - Keep proposals under 500 words
+#       - Always include a "Non-goals" section
+#     tasks:
+#       - Break tasks into chunks of max 2 hours

@@ -2,7 +2,7 @@ import React, { useMemo, useState, useRef, useEffect } from "react";
 
 /**
  * Autocomplete khách hàng theo tên / SĐT.
- * - Khi user gõ >= 3 ký tự, hiện dropdown các khách matching.
+ * - Khi user gõ >= 1 ký tự, hiện dropdown các khách matching.
  * - Click 1 dòng → populate tên + SĐT vào form.
  * - Nếu khách bị blacklist → icon ⚠️ kèm tooltip lý do.
  *
@@ -39,26 +39,37 @@ export default function ClientAutocomplete({
 
   const keyword = nameValue.trim().toLowerCase();
 
+  // Group by client: mỗi entry = { client, phones[] }. Skip type='old'.
+  // Filter: giữ phone nếu keyword khớp fullname HOẶC phone_number của phone đó.
+  // Sort primary trước secondary. Max 8 clients.
   const matches = useMemo(() => {
-    if (keyword.length < 3) return [];
-    return clients
-      .filter((c) => {
-        const nameHit = c.fullname?.toLowerCase().includes(keyword);
-        const phoneHit = c.client_phones?.some((p) =>
-          p.phone_number?.toLowerCase().includes(keyword)
-        );
-        return nameHit || phoneHit;
-      })
-      .slice(0, 8); // tối đa 8 gợi ý
+    if (keyword.length < 1) return [];
+    const groups = [];
+    for (const c of clients) {
+      const phones = (c.client_phones || []).filter((p) => p.type !== "old");
+      const nameHit = c.fullname?.toLowerCase().includes(keyword);
+      if (phones.length === 0) {
+        if (nameHit) groups.push({ client: c, phones: [] });
+        continue;
+      }
+      const sorted = [...phones].sort((a, b) => {
+        if (a.type === "primary" && b.type !== "primary") return -1;
+        if (a.type !== "primary" && b.type === "primary") return 1;
+        return 0;
+      });
+      const matched = [];
+      for (const p of sorted) {
+        const phoneHit = p.phone_number?.toLowerCase().includes(keyword);
+        if (nameHit || phoneHit) matched.push(p);
+      }
+      if (matched.length > 0) groups.push({ client: c, phones: matched });
+    }
+    return groups.slice(0, 8);
   }, [clients, keyword]);
 
-  const handlePick = (c) => {
-    const primaryPhone =
-      c.client_phones?.find((p) => p.type === "primary")?.phone_number ||
-      c.client_phones?.[0]?.phone_number ||
-      "";
-    onNameChange(c.fullname || "");
-    onPhoneChange(primaryPhone);
+  const handlePick = (client, phone) => {
+    onNameChange(client.fullname || "");
+    onPhoneChange(phone?.phone_number || "");
     setSkipNextOpen(true);
     setOpen(false);
   };
@@ -76,7 +87,7 @@ export default function ClientAutocomplete({
             else setOpen(true);
           }}
           onFocus={() => {
-            if (!skipNextOpen && keyword.length >= 3) setOpen(true);
+            if (!skipNextOpen && keyword.length >= 1) setOpen(true);
           }}
           placeholder={namePlaceholder}
           autoComplete="off"
@@ -84,24 +95,15 @@ export default function ClientAutocomplete({
         />
 
         {open && matches.length > 0 && (
-          <ul className="absolute z-30 left-0 right-0 mt-1 max-h-64 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg text-xs divide-y">
-            {matches.map((c) => {
-              const primary =
-                c.client_phones?.find((p) => p.type === "primary")?.phone_number ||
-                c.client_phones?.[0]?.phone_number ||
-                "—";
+          <ul className="absolute z-30 left-0 right-0 mt-1 max-h-80 overflow-y-auto bg-white border border-gray-200 rounded-lg shadow-lg text-xs divide-y">
+            {matches.map((group) => {
+              const c = group.client;
               return (
                 <li
                   key={c.id}
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    handlePick(c);
-                  }}
-                  className={`px-3 py-2 cursor-pointer hover:bg-orange-50 flex items-center justify-between gap-2 ${
-                    c.is_blacklist ? "bg-red-50/40" : ""
-                  }`}
+                  className={c.is_blacklist ? "bg-red-50/40" : ""}
                 >
-                  <div className="min-w-0 flex-1">
+                  <div className="px-3 pt-2 pb-1 flex items-center justify-between gap-2">
                     <p className="font-semibold text-gray-800 truncate flex items-center gap-1.5">
                       {c.is_blacklist && (
                         <span
@@ -113,12 +115,48 @@ export default function ClientAutocomplete({
                       )}
                       {c.fullname}
                     </p>
-                    <p className="text-gray-500 font-mono text-[11px]">{primary}</p>
+                    {c.is_blacklist && (
+                      <span className="bg-red-100 text-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0">
+                        BLACKLIST
+                      </span>
+                    )}
                   </div>
-                  {c.is_blacklist && (
-                    <span className="bg-red-100 text-red-700 text-[9px] font-bold px-1.5 py-0.5 rounded shrink-0">
-                      BLACKLIST
-                    </span>
+                  {group.phones.length === 0 ? (
+                    <div
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        handlePick(c, null);
+                      }}
+                      className="px-3 pb-2 pl-5 text-gray-400 italic cursor-pointer hover:text-gray-600"
+                    >
+                      (chưa có số điện thoại)
+                    </div>
+                  ) : (
+                    <div className="pb-1.5">
+                      {group.phones.map((p) => (
+                        <div
+                          key={p.id}
+                          onMouseDown={(e) => {
+                            e.preventDefault();
+                            handlePick(c, p);
+                          }}
+                          className="px-3 py-1 pl-5 cursor-pointer hover:bg-orange-100 flex items-center gap-2"
+                        >
+                          <span className="font-mono text-gray-600">
+                            {p.phone_number}
+                          </span>
+                          <span
+                            className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${
+                              p.type === "primary"
+                                ? "bg-orange-100 text-orange-700"
+                                : "bg-gray-100 text-gray-600"
+                            }`}
+                          >
+                            {p.type === "primary" ? "chính" : "phụ"}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </li>
               );
@@ -126,7 +164,7 @@ export default function ClientAutocomplete({
           </ul>
         )}
 
-        {open && keyword.length >= 3 && matches.length === 0 && (
+        {open && keyword.length >= 1 && matches.length === 0 && (
           <div className="absolute z-30 left-0 right-0 mt-1 bg-white border border-gray-200 rounded-lg shadow-lg text-xs px-3 py-2 text-gray-500 italic">
             Không tìm thấy khách hàng. Sẽ tạo mới khi lưu đơn.
           </div>
@@ -134,7 +172,7 @@ export default function ClientAutocomplete({
       </div>
 
       <div>
-        <label className="block text-xs text-gray-400 mb-1">SĐT chính (Optional)</label>
+        <label className="block text-xs text-gray-400 mb-1">SĐT</label>
         <div className="relative">
           <input
             type="text"
