@@ -2013,6 +2013,16 @@ const handleStartCreateBill = async (e) => {
     showToast("Vui lòng nhập địa chỉ giao hàng!", "error");
     return;
   }
+  // Rule: đơn giao tận nơi bắt buộc thanh toán trước.
+  if (isHomeDelivery && !isPaidImmediately && !isFreeShipping) {
+    showToast(
+      feeQuoteLater
+        ? "Đơn giao tận nơi bắt buộc thanh toán trước — bỏ 'Báo giá cước sau' để nhập cước và thu tiền!"
+        : "Đơn giao tận nơi bắt buộc thanh toán trước — vui lòng tích 'Đã thanh toán'!",
+      "error"
+    );
+    return;
+  }
   // Ghi chú required khi có yêu cầu đối chiếu CCCD (thông tin nhạy cảm, cần lưu lại)
   if (requireIdCheck && !orderNote.trim()) {
     showToast("Vui lòng nhập thông tin CCCD vào ô Ghi chú!", "error");
@@ -6038,6 +6048,11 @@ return (
                           onChange={(e) => {
                             const checked = e.target.checked;
                             setIsHomeDelivery(checked);
+                            // Rule: đơn giao tận nơi bắt buộc thanh toán trước → tự tích "Đã thanh toán"
+                            // (trừ khi miễn phí / báo giá sau — 2 trường hợp không thu được ngay).
+                            if (checked && !isFreeShipping && !feeQuoteLater) {
+                              setIsPaidImmediately(true);
+                            }
                             // Auto-populate địa chỉ giao hàng từ DB — CHỈ xét theo người nhận
                             if (checked && receiverName.trim()) {
                               const nameLower = receiverName.trim().toLowerCase();
@@ -6067,12 +6082,12 @@ return (
                       <label className={`flex items-center gap-2 text-sm font-bold ${(isFreeShipping || feeQuoteLater) ? "text-gray-400 cursor-not-allowed" : "text-emerald-700 cursor-pointer"}`}>
                         <input
                           type="checkbox"
-                          checked={isPaidImmediately}
-                          disabled={isFreeShipping || feeQuoteLater}
+                          checked={isPaidImmediately || (isHomeDelivery && !isFreeShipping && !feeQuoteLater)}
+                          disabled={isFreeShipping || feeQuoteLater || (isHomeDelivery && !isFreeShipping && !feeQuoteLater)}
                           onChange={(e) => setIsPaidImmediately(e.target.checked)}
                           className="rounded text-green-600 focus:ring-green-500"
                         />
-                        <span>Đã thanh toán</span>
+                        <span>Đã thanh toán{isHomeDelivery && !isFreeShipping && !feeQuoteLater ? " (bắt buộc — giao tận nơi)" : ""}</span>
                       </label>
                       </div>
                     </div>

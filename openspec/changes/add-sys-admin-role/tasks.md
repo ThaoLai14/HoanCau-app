@@ -601,3 +601,18 @@ Implementation:
 - [x] 14.47.2 [scripts/rename-users.map.example.json](../../../scripts/rename-users.map.example.json) — file mẫu ánh xạ. User copy → `rename-users.map.json` rồi sửa.
 - [x] 14.47.3 Lưu ý: dữ liệu lịch sử cũ (`audit_log.username`, `*_snapshot`) giữ tên cũ — không ảnh hưởng đăng nhập.
 
+### 14.48 Tạo đơn — đơn giao tận nơi bắt buộc thanh toán trước
+
+Vấn đề (verbatim): "ở flow tạo đơn hàng, thêm 1 rule là: đối với đơn giao tận nơi bắt buộc thanh toán trước."
+
+Rule nghiệp vụ:
+- Đơn có tích "Có giao tận nơi" → bắt buộc "Đã thanh toán" (thu tiền trước khi giao).
+- Ngoại lệ: đơn **miễn phí** (không có gì để thu) → coi như thỏa, cho tạo.
+- Đơn **báo giá cước sau** (chưa biết cước, không thu được) → không cho kết hợp với giao tận nơi; phải bỏ "Báo giá cước sau" để nhập cước và thu tiền.
+
+Implementation:
+- [x] 14.48.1 [src/App.jsx](../../../src/App.jsx) — khi tích "Có giao tận nơi" (và không miễn phí / không báo giá sau) → tự `setIsPaidImmediately(true)`.
+- [x] 14.48.2 [src/App.jsx](../../../src/App.jsx) — checkbox "Đã thanh toán" tự tích + khóa (disabled) khi đang giao tận nơi (không miễn phí/báo giá sau); label phụ "(bắt buộc — giao tận nơi)".
+- [x] 14.48.3 [src/App.jsx](../../../src/App.jsx) — `handleStartCreateBill`: safety-net validate `isHomeDelivery && !isPaidImmediately && !isFreeShipping` → toast chặn; nếu `feeQuoteLater` thì gợi ý bỏ "Báo giá cước sau".
+- [x] 14.48.4 Build check pass.
+
