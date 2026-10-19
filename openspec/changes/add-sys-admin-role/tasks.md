@@ -617,3 +617,11 @@ Implementation:
 - [x] 14.48.2 [src/App.jsx](../../../src/App.jsx) — label "Đã thanh toán" hiện dấu `*` khi đang giao tận nơi (không miễn phí/báo giá sau) để báo bắt buộc; KHÔNG auto-tick, KHÔNG khóa — user tự tích.
 - [x] 14.48.3 Build check pass.
 
+### 14.49 Danh Sách Bốc Xếp — hover "Có" (giao tận nơi) hiện địa chỉ giao
+
+Vấn đề (verbatim): "ở screen bốc xếp, khi đơn giao tận nơi, hover chuột vào chữ Có thì hiện địa chỉ giao hàng lên".
+
+Implementation:
+- [x] 14.49.1 [src/App.jsx](../../../src/App.jsx) — cột "Giao tận nơi" trong bảng bốc xếp: badge "Có" thêm `title={bill.delivery_address ? 'Địa chỉ giao: ...' : 'Chưa có địa chỉ giao'}` + `cursor-help`.
+- [x] 14.49.2 Build check pass.
+

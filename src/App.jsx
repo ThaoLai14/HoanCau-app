@@ -2018,7 +2018,7 @@ const handleStartCreateBill = async (e) => {
     showToast(
       feeQuoteLater
         ? "Đơn giao tận nơi bắt buộc thanh toán trước — bỏ 'Báo giá cước sau' để nhập cước và thu tiền!"
-        : "Đơn giao tận nơi bắt buộc thanh toán trước — vui lòng tích 'Đã thanh toán'!",
+        : "Đơn giao tận nơi bắt buộc thanh toán trước — Thu tiền khách và chọn 'Đã thanh toán'!",
       "error"
     );
     return;
@@ -6460,7 +6460,10 @@ return (
                       }</td>
                       <td className="py-4 px-4 text-center">
                         {bill.is_home_delivery ? (
-                          <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">Có</span>
+                          <span
+                            className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold cursor-help"
+                            title={bill.delivery_address ? `Địa chỉ giao: ${bill.delivery_address}` : "Chưa có địa chỉ giao"}
+                          >Có</span>
                         ) : (
                           <span className="text-gray-400">—</span>
                         )}
