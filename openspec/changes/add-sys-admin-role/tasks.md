@@ -625,3 +625,14 @@ Implementation:
 - [x] 14.49.1 [src/App.jsx](../../../src/App.jsx) — cột "Giao tận nơi" trong bảng bốc xếp: badge "Có" thêm `title={bill.delivery_address ? 'Địa chỉ giao: ...' : 'Chưa có địa chỉ giao'}` + `cursor-help`.
 - [x] 14.49.2 Build check pass.
 
+### 14.50 Bốc Xếp — tooltip địa chỉ giao hiện NGAY khi hover (bỏ delay ~1s của title)
+
+Vấn đề (verbatim): "hover vào chữ Có, khoảng 1s sau nó mới hiện địa chỉ á, có cách nào hover vào là hiện liền ko?"
+
+Nguyên nhân: thuộc tính `title` dùng tooltip mặc định của trình duyệt, có độ trễ ~1s không tùy chỉnh được.
+
+Implementation:
+- [x] 14.50.1 [src/App.jsx](../../../src/App.jsx) — thêm component `HoverTooltip`: `onMouseEnter` tính rect + render tooltip qua `createPortal` (fixed position, zIndex 9999) → hiện ngay, không bị bảng `overflow` cắt.
+- [x] 14.50.2 [src/App.jsx](../../../src/App.jsx) — thay badge "Có" dùng `title` sang bọc `HoverTooltip` với nội dung địa chỉ giao.
+- [x] 14.50.3 Build check pass.
+

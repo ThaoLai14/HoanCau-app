@@ -478,6 +478,35 @@ function MoneyInput({ value, onChange, className, placeholder, required, autoFoc
   );
 }
 
+// Tooltip hiện NGAY khi hover (không có delay ~1s như thuộc tính title mặc định).
+// Dùng portal để không bị container overflow của bảng cắt.
+function HoverTooltip({ label, children, className }) {
+  const [show, setShow] = useState(false);
+  const [pos, setPos] = useState(null);
+  const ref = useRef(null);
+  const showTip = () => {
+    const r = ref.current?.getBoundingClientRect();
+    if (!r) return;
+    setPos({ left: r.left + r.width / 2, top: r.top - 6 });
+    setShow(true);
+  };
+  const hideTip = () => setShow(false);
+  return (
+    <span ref={ref} onMouseEnter={showTip} onMouseLeave={hideTip} className={`inline-block cursor-help ${className || ""}`}>
+      {children}
+      {show && pos && createPortal(
+        <div
+          className="pointer-events-none bg-gray-900 text-white text-[11px] font-normal px-2 py-1 rounded shadow-lg max-w-xs whitespace-normal"
+          style={{ position: "fixed", left: pos.left, top: pos.top, transform: "translate(-50%, -100%)", zIndex: 9999 }}
+        >
+          {label}
+        </div>,
+        document.body
+      )}
+    </span>
+  );
+}
+
 // Ô "Hàng Ghép": state cục bộ để gõ không bị realtime refetch ghi đè; chỉ lưu DB khi rời ô.
 function CombinedGoodsInput({ value, disabled, onSave, title }) {
   const [text, setText] = useState(value ?? '');
@@ -6460,10 +6489,9 @@ return (
                       }</td>
                       <td className="py-4 px-4 text-center">
                         {bill.is_home_delivery ? (
-                          <span
-                            className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold cursor-help"
-                            title={bill.delivery_address ? `Địa chỉ giao: ${bill.delivery_address}` : "Chưa có địa chỉ giao"}
-                          >Có</span>
+                          <HoverTooltip label={bill.delivery_address ? `Địa chỉ giao: ${bill.delivery_address}` : "Chưa có địa chỉ giao"}>
+                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">Có</span>
+                          </HoverTooltip>
                         ) : (
                           <span className="text-gray-400">—</span>
                         )}
