@@ -2114,6 +2114,7 @@ const handleStartCreateBill = async (e) => {
           billData,
           mode: "convert",
           draftId: editingDraftId,
+          stage: "choice",
         });
         return;
       }
@@ -2131,6 +2132,7 @@ const handleStartCreateBill = async (e) => {
           branch: currentBranch,
           billData,
           mode: "create",
+          stage: "choice",
         });
         return;
       }
@@ -2169,19 +2171,43 @@ const handleDepartureConfirmProceed = async () => {
   }
 };
 
-// Popup xuất bến — user chọn lưu nháp để đi xuất bến trước rồi quay lại.
-const handleDepartureConfirmSaveDraft = async () => {
+// Popup xuất bến — user chọn "Tạo đơn cho ngày mai" + xác nhận xe ĐÃ xuất bến:
+// chốt chuyến hôm nay (advance session) rồi tạo đơn cho chuyến mai (mã + business_date của chuyến mới).
+const handleDepartureCreateTomorrow = async () => {
   const dlg = departureConfirmDialog;
-  setDepartureConfirmDialog(null);
   if (!dlg) return;
-  const draftData = { ...dlg.billData, isDraft: true };
-  if (dlg.mode === "convert") {
-    // Đang từ nháp → giữ nguyên nháp (update để giữ chỉnh sửa mới nhất).
-    await executeUpdateDraft(dlg.draftId, draftData);
-  } else {
-    await executeCreateBill(draftData);
+  const branch = dlg.branch;
+  const bId = branchIdByCode[branch];
+  if (!bId) { showToast("Không tìm thấy chi nhánh!", "error"); return; }
+  const curSess = branchSessions[branch];
+  const todayVN = getVNTodayDate();
+  // Nếu chi nhánh chưa xuất bến (business_date = hôm nay) → advance session = Xuất Bến để đơn thuộc chuyến mai.
+  if (!(curSess && curSess.business_date > todayVN)) {
+    const rolled = await advanceBranchSession(bId, session?.id);
+    if (!rolled) { showToast("Lỗi chốt chuyến — vui lòng thử lại!", "error"); return; }
+    setBranchSessions(prev => ({ ...prev, [branch]: rolled }));
+    try {
+      logAudit({
+        entityType: "session",
+        entityId: bId,
+        entityLabel: `${branch}/${rolled.business_date}`,
+        action: "session_departure",
+        changes: {
+          day_counter: [curSess?.day_counter || null, rolled.day_counter],
+          business_date: [curSess?.business_date || null, rolled.business_date],
+          bill_seq: [curSess?.bill_seq ?? null, rolled.bill_seq],
+        },
+        note: `Xuất bến ${branch} — tạo đơn cho chuyến mai (sau ${String(DEPARTURE_CUTOFF_HOUR).padStart(2, "0")}:${String(DEPARTURE_CUTOFF_MIN).padStart(2, "0")})`,
+      });
+    } catch (e) { console.warn("Audit departure failed (non-fatal):", e); }
   }
-  showToast("Đã lưu nháp. Sau khi xuất bến, mở lại nháp để tạo đơn cho chuyến mai.", "success");
+  setDepartureConfirmDialog(null);
+  if (dlg.mode === "convert") {
+    await executeConvertDraftToBill(dlg.draftId, dlg.billData, { ignoreReservedCode: true });
+  } else {
+    await executeCreateBill(dlg.billData, { ignoreReservedCode: true });
+  }
+  showToast("Đã chốt chuyến hôm nay. Đơn được tạo cho chuyến ngày mai.", "success");
 };
 
 // 2b. Lưu nháp (Fix #1)
@@ -2484,7 +2510,7 @@ const executeUpdateDraft = async (draftId, data) => {
 };
 
 // 2d. Convert draft to official bill (assign bill_code and set status to pending)
-const executeConvertDraftToBill = async (draftId, data) => {
+const executeConvertDraftToBill = async (draftId, data, opts) => {
   if (!data || !draftId) return;
   setLoading(true);
 
@@ -2503,7 +2529,8 @@ const executeConvertDraftToBill = async (draftId, data) => {
     setBranchSessions(prev => ({ ...prev, [currentBranch]: convertSess }));
 
     // Use reserved bill code if available, otherwise build from session
-    let billCode = reservedBillCode;
+    // ignoreReservedCode: khi tạo đơn cho chuyến mai (vừa advance session) → mã reserve cũ của hôm nay không còn đúng.
+    let billCode = opts?.ignoreReservedCode ? buildBillCodeFromSession(currentBranch, convertSess) : reservedBillCode;
     if (!billCode || billCode === "---" || billCode === "ERR" || billCode === "Đang tải...") {
       billCode = buildBillCodeFromSession(currentBranch, convertSess);
     }
@@ -2643,7 +2670,7 @@ const executeConvertDraftToBill = async (draftId, data) => {
 };
 
 // 3. Thực thi tạo đơn hàng (Fix bug .single() trùng tên, thiếu liên kết SĐT)
-const executeCreateBill = async (data) => {
+const executeCreateBill = async (data, opts) => {
   if (!data) return;
   setLoading(true);
 
@@ -2666,8 +2693,8 @@ const executeCreateBill = async (data) => {
     let generatedCode = null;
 
     if (!data.isDraft) {
-      // Dùng mã đã reserve (mã preview = mã thật)
-      generatedCode = reservedBillCode;
+      // Dùng mã đã reserve (mã preview = mã thật). ignoreReservedCode: chuyến mai → build mã từ session mới.
+      generatedCode = opts?.ignoreReservedCode ? buildBillCodeFromSession(currentBranch, createSess) : reservedBillCode;
       // Fallback: nếu chưa có mã reserve, build từ session
       if (!generatedCode || generatedCode === "---" || generatedCode === "ERR") {
         generatedCode = buildBillCodeFromSession(currentBranch, createSess);
@@ -4157,30 +4184,65 @@ return (
     {/* --- MODAL XÁC NHẬN XUẤT BẾN (sau 16:30) --- */}
     {departureConfirmDialog && (() => {
       const dlg = departureConfirmDialog;
+      const timeLabel = `${String(DEPARTURE_CUTOFF_HOUR).padStart(2, "0")}:${String(DEPARTURE_CUTOFF_MIN).padStart(2, "0")}`;
       return (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-[fadeIn_0.15s_ease-out]">
-            <div className="px-5 py-4 border-b bg-amber-50">
-              <h3 className="font-bold text-sm text-amber-800">
-                🚛 Đã sau {String(DEPARTURE_CUTOFF_HOUR).padStart(2, "0")}:{String(DEPARTURE_CUTOFF_MIN).padStart(2, "0")} — Xe kho {dlg.branch} đã xuất bến chưa?
-              </h3>
-            </div>
-            <div className="px-5 py-3 bg-gray-50 border-t flex flex-col sm:flex-row justify-end gap-2">
-              <button
-                type="button"
-                onClick={handleDepartureConfirmSaveDraft}
-                className="px-4 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg"
-              >
-                💾 Lưu nháp
-              </button>
-              <button
-                type="button"
-                onClick={handleDepartureConfirmProceed}
-                className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
-              >
-                ✅ Tạo đơn cho hôm nay
-              </button>
-            </div>
+            {dlg.stage === "confirm" ? (
+              <>
+                <div className="px-5 py-4 border-b bg-amber-50">
+                  <h3 className="font-bold text-sm text-amber-800">
+                    🚛 Xe kho {dlg.branch} đã xuất bến chưa?
+                  </h3>
+                </div>
+                <div className="px-5 py-3 text-sm text-gray-600">
+                  Nếu xe đã xuất bến, hệ thống sẽ chốt chuyến hôm nay và tạo đơn này cho <b>chuyến ngày mai</b>.
+                </div>
+                <div className="px-5 py-3 bg-gray-50 border-t flex flex-col sm:flex-row justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setDepartureConfirmDialog({ ...dlg, stage: "choice" })}
+                    className="px-4 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg"
+                  >
+                    ← Chưa, quay lại
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDepartureCreateTomorrow}
+                    className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
+                  >
+                    ✅ Rồi, tạo đơn ngày mai
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <div className="px-5 py-4 border-b bg-amber-50">
+                  <h3 className="font-bold text-sm text-amber-800">
+                    🚛 Đã sau {timeLabel} — Tạo đơn cho chuyến nào?
+                  </h3>
+                </div>
+                <div className="px-5 py-3 text-sm text-gray-600">
+                  Xe kho {dlg.branch} có thể đã xuất bến. Chọn chuyến áp dụng cho đơn này.
+                </div>
+                <div className="px-5 py-3 bg-gray-50 border-t flex flex-col sm:flex-row justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleDepartureConfirmProceed}
+                    className="px-4 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg"
+                  >
+                    📦 Tạo đơn hôm nay
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setDepartureConfirmDialog({ ...dlg, stage: "confirm" })}
+                    className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
+                  >
+                    📅 Tạo đơn ngày mai
+                  </button>
+                </div>
+              </>
+            )}
           </div>
         </div>
       );
@@ -4898,7 +4960,7 @@ return (
           <h1 className="text-xs md:text-sm font-bold text-gray-800 uppercase truncate">
             {currentTab === "clients" && "👥 QUẢN LÝ KHÁCH HÀNG"}
             {currentTab === "bills" && "📦 LẬP & PHÁT HOÁ ĐƠN GỬI HÀNG"}
-            {currentTab === "warehouse" && "🚚 DANH SÁCH BỐC DỠ HÀNG HOÁ THEO NGÀY (THỦ KHO)"}
+            {currentTab === "warehouse" && "🚚 DANH SÁCH BỐC DỠ HÀNG HOÁ THEO NGÀY"}
             {currentTab === "all-bills" && "📋 TỔNG HỢP HỆ THỐNG ĐƠN HÀNG"}
             {currentTab === "revenue" && "💰 BÁO CÁO DOANH THU & CHI TIÊU"}
             {currentTab === "debt" && "🧾 CÔNG NỢ THEO KHÁCH HÀNG"}

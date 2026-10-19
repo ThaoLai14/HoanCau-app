@@ -636,3 +636,22 @@ Implementation:
 - [x] 14.50.2 [src/App.jsx](../../../src/App.jsx) — thay badge "Có" dùng `title` sang bọc `HoverTooltip` với nội dung địa chỉ giao.
 - [x] 14.50.3 Build check pass.
 
+### 14.51 Tạo đơn sau 16:30 — thay "Lưu nháp" bằng "Tạo đơn cho ngày mai" (popup 2 bước)
+
+Vấn đề (verbatim): "t muốn đổi rule, ko lưu nháp nữa mà thay bằng button tạo đơn cho ngày mai. khi chọn button đó thì hiện thêm 1 popup confirm xác nhận xe đã xuất bến chưa, nếu rồi thì tạo đơn cho ngày mai. chưa thì đóng popup xác nhận xuất bến, và quay lại popup xác nhận tạo đơn cho hôm nay hoặc ngày mai, để user check lại."
+
+Rule nghiệp vụ (thay cho 14.48-cũ / rule nháp sau cutoff):
+- Sau 16:30 (giờ VN) + chưa xuất bến + không phải sys_admin → popup **bước 1**: "Tạo đơn cho chuyến nào?" với 2 nút: **Tạo đơn hôm nay** / **Tạo đơn ngày mai**. (Bỏ hẳn nút "Lưu nháp".)
+- "Tạo đơn hôm nay" → tạo đơn chính thức cho chuyến hôm nay (như cũ).
+- "Tạo đơn ngày mai" → popup **bước 2**: "Xe kho {branch} đã xuất bến chưa?":
+  - **Rồi** → chốt chuyến hôm nay (advance session = Xuất Bến) rồi tạo đơn cho chuyến mai (mã + business_date của chuyến mới).
+  - **Chưa** → đóng bước 2, **quay lại bước 1** để user chọn lại.
+- Nếu đã xuất bến sẵn (business_date > hôm nay) → không hỏi, tạo thẳng cho chuyến mai (như cũ). sys_admin vẫn bypass.
+
+Implementation:
+- [x] 14.51.1 [src/App.jsx](../../../src/App.jsx) — `executeCreateBill(data, opts)` + `executeConvertDraftToBill(draftId, data, opts)` nhận `opts.ignoreReservedCode`: khi tạo cho chuyến mai, bỏ qua mã đã reserve của hôm nay, build mã từ session mới (sau advance).
+- [x] 14.51.2 [src/App.jsx](../../../src/App.jsx) — thay `handleDepartureConfirmSaveDraft` bằng `handleDepartureCreateTomorrow`: nếu chưa xuất bến thì `advanceBranchSession` (+ log `session_departure`), rồi gọi create/convert với `ignoreReservedCode:true`.
+- [x] 14.51.3 [src/App.jsx](../../../src/App.jsx) — `departureConfirmDialog` thêm field `stage` ("choice" | "confirm"); 2 chỗ mở popup set `stage:"choice"`.
+- [x] 14.51.4 [src/App.jsx](../../../src/App.jsx) — viết lại modal 2 bước: choice (hôm nay / ngày mai) ↔ confirm (đã xuất bến chưa, nút "Chưa" quay lại choice).
+- [x] 14.51.5 Build check pass.
+
