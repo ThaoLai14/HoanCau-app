@@ -1410,22 +1410,23 @@ const reserveBillCode = async () => {
 // Xử lý "Xuất Bến" — cập nhật branch_sessions trên server.
 // Ảnh hưởng ĐỒNG BỘ mọi máy đang login vào cùng chi nhánh.
 // Rule: chỉ user (bất kỳ role) cùng branch với warehouseBranch mới xuất bến được.
-const handleDeparture = async () => {
-  const branch = warehouseBranch;
-  if (!branch) { showToast("Chưa xác định chi nhánh kho!", "error"); return; }
+// opts.skipConfirm: bỏ bước askConfirm (khi đã xác nhận ở nơi khác, VD popup tạo đơn ngày mai).
+// Trả về session mới (rolled) nếu thành công, null nếu bị chặn/lỗi.
+const performDeparture = async (branch, opts = {}) => {
+  if (!branch) { showToast("Chưa xác định chi nhánh kho!", "error"); return null; }
   if (session?.role === 'boss') {
     showToast('Boss chỉ được xem, không được xuất bến.', 'error');
-    return;
+    return null;
   }
   if (branch !== session?.branch_code) {
     showToast(`Chỉ nhân viên chi nhánh ${branch} mới được xuất bến kho ${branch}!`, 'error');
-    return;
+    return null;
   }
   // Defense-in-depth: block xuất bến khi chuyến hiện tại chưa có bill thật.
   const curSeq = branchSessions[branch]?.bill_seq ?? 1;
   if (curSeq <= 1) {
     showToast(`Chuyến hiện tại của kho ${branch} chưa có đơn hàng nào — không thể xuất bến!`, 'error');
-    return;
+    return null;
   }
   // Defense-in-depth: block xuất bến nếu còn đơn chưa điền đủ / chưa khớp số kiện Trong-Ngoài của chuyến hiện tại.
   const tripBusinessDate = branchSessions[branch]?.business_date;
@@ -1443,22 +1444,23 @@ const handleDeparture = async () => {
   });
   if (incompleteBills.length > 0) {
     showToast(`Còn ${incompleteBills.length} đơn chưa điền đủ hoặc chưa khớp số kiện Trong/Ngoài — vui lòng kiểm tra lại!`, 'error');
-    return;
+    return null;
   }
   const bId = branchIdByCode[branch];
-  if (!bId) { showToast("Không tìm thấy chi nhánh trong DB!", "error"); return; }
+  if (!bId) { showToast("Không tìm thấy chi nhánh trong DB!", "error"); return null; }
   const branchLabel = branch === "SG" ? "Sài Gòn (SG)" : "Gia Lai (GL)";
-
   const curSess = branchSessions[branch];
 
-  const ok = await askConfirm({
-    title: `Xác nhận xuất bến — ${branchLabel}`,
-    confirmText: "Xuất bến",
-  });
-  if (!ok) return;
+  if (!opts.skipConfirm) {
+    const ok = await askConfirm({
+      title: `Xác nhận xuất bến — ${branchLabel}`,
+      confirmText: "Xuất bến",
+    });
+    if (!ok) return null;
+  }
 
   const rolled = await advanceBranchSession(bId, session?.id);
-  if (!rolled) { showToast("Lỗi xuất bến — vui lòng thử lại!", "error"); return; }
+  if (!rolled) { showToast("Lỗi xuất bến — vui lòng thử lại!", "error"); return null; }
 
   setBranchSessions(prev => ({ ...prev, [branch]: rolled }));
 
@@ -1486,6 +1488,11 @@ const handleDeparture = async () => {
     `Đã xuất bến kho ${branch}! Mã đơn hàng mới sẽ bắt đầu từ ${buildBillCodeFromSession(branch, rolled)}`,
     "success"
   );
+  return rolled;
+};
+
+const handleDeparture = async () => {
+  await performDeparture(warehouseBranch);
 };
 
 // In danh sách bốc xếp — mở tab preview với table + nút In / Tải Excel (.xls).
@@ -2172,34 +2179,15 @@ const handleDepartureConfirmProceed = async () => {
 };
 
 // Popup xuất bến — user chọn "Tạo đơn cho ngày mai" + xác nhận xe ĐÃ xuất bến:
-// chốt chuyến hôm nay (advance session) rồi tạo đơn cho chuyến mai (mã + business_date của chuyến mới).
+// "Rồi" ≡ bấm nút Xuất Bến (cùng validation + advance session + audit + cập nhật mã), rồi tạo đơn cho chuyến mai.
 const handleDepartureCreateTomorrow = async () => {
   const dlg = departureConfirmDialog;
   if (!dlg) return;
-  const branch = dlg.branch;
-  const bId = branchIdByCode[branch];
-  if (!bId) { showToast("Không tìm thấy chi nhánh!", "error"); return; }
-  const curSess = branchSessions[branch];
-  const todayVN = getVNTodayDate();
-  // Nếu chi nhánh chưa xuất bến (business_date = hôm nay) → advance session = Xuất Bến để đơn thuộc chuyến mai.
-  if (!(curSess && curSess.business_date > todayVN)) {
-    const rolled = await advanceBranchSession(bId, session?.id);
-    if (!rolled) { showToast("Lỗi chốt chuyến — vui lòng thử lại!", "error"); return; }
-    setBranchSessions(prev => ({ ...prev, [branch]: rolled }));
-    try {
-      logAudit({
-        entityType: "session",
-        entityId: bId,
-        entityLabel: `${branch}/${rolled.business_date}`,
-        action: "session_departure",
-        changes: {
-          day_counter: [curSess?.day_counter || null, rolled.day_counter],
-          business_date: [curSess?.business_date || null, rolled.business_date],
-          bill_seq: [curSess?.bill_seq ?? null, rolled.bill_seq],
-        },
-        note: `Xuất bến ${branch} — tạo đơn cho chuyến mai (sau ${String(DEPARTURE_CUTOFF_HOUR).padStart(2, "0")}:${String(DEPARTURE_CUTOFF_MIN).padStart(2, "0")})`,
-      });
-    } catch (e) { console.warn("Audit departure failed (non-fatal):", e); }
+  const rolled = await performDeparture(dlg.branch, { skipConfirm: true });
+  if (!rolled) {
+    // Bị chặn (chuyến rỗng / chưa khớp số kiện Trong-Ngoài) → quay lại bước chọn để user xử lý.
+    setDepartureConfirmDialog({ ...dlg, stage: "choice" });
+    return;
   }
   setDepartureConfirmDialog(null);
   if (dlg.mode === "convert") {
@@ -2207,7 +2195,6 @@ const handleDepartureCreateTomorrow = async () => {
   } else {
     await executeCreateBill(dlg.billData, { ignoreReservedCode: true });
   }
-  showToast("Đã chốt chuyến hôm nay. Đơn được tạo cho chuyến ngày mai.", "success");
 };
 
 // 2b. Lưu nháp (Fix #1)

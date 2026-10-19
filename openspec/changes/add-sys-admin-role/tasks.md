@@ -647,11 +647,13 @@ Rule nghiệp vụ (thay cho 14.48-cũ / rule nháp sau cutoff):
   - **Rồi** → chốt chuyến hôm nay (advance session = Xuất Bến) rồi tạo đơn cho chuyến mai (mã + business_date của chuyến mới).
   - **Chưa** → đóng bước 2, **quay lại bước 1** để user chọn lại.
 - Nếu đã xuất bến sẵn (business_date > hôm nay) → không hỏi, tạo thẳng cho chuyến mai (như cũ). sys_admin vẫn bypass.
+- **Bấm "Rồi" ≡ bấm nút Xuất Bến** (chốt 2026-10-19): chạy CHUNG logic `performDeparture` — đầy đủ validation (chuyến phải có đơn, mọi đơn khớp số kiện Trong/Ngoài), advance session, audit, cập nhật mã. Nếu validation chặn → quay lại bước 1 (chọn hôm nay / fix rồi thử lại).
 
 Implementation:
 - [x] 14.51.1 [src/App.jsx](../../../src/App.jsx) — `executeCreateBill(data, opts)` + `executeConvertDraftToBill(draftId, data, opts)` nhận `opts.ignoreReservedCode`: khi tạo cho chuyến mai, bỏ qua mã đã reserve của hôm nay, build mã từ session mới (sau advance).
-- [x] 14.51.2 [src/App.jsx](../../../src/App.jsx) — thay `handleDepartureConfirmSaveDraft` bằng `handleDepartureCreateTomorrow`: nếu chưa xuất bến thì `advanceBranchSession` (+ log `session_departure`), rồi gọi create/convert với `ignoreReservedCode:true`.
-- [x] 14.51.3 [src/App.jsx](../../../src/App.jsx) — `departureConfirmDialog` thêm field `stage` ("choice" | "confirm"); 2 chỗ mở popup set `stage:"choice"`.
-- [x] 14.51.4 [src/App.jsx](../../../src/App.jsx) — viết lại modal 2 bước: choice (hôm nay / ngày mai) ↔ confirm (đã xuất bến chưa, nút "Chưa" quay lại choice).
-- [x] 14.51.5 Build check pass.
+- [x] 14.51.2 [src/App.jsx](../../../src/App.jsx) — tách `performDeparture(branch, opts)` dùng chung cho nút Xuất Bến (`handleDeparture`) và `handleDepartureCreateTomorrow`; `opts.skipConfirm` bỏ askConfirm khi đã confirm qua popup. Trả về rolled session hoặc null (bị chặn).
+- [x] 14.51.3 [src/App.jsx](../../../src/App.jsx) — `handleDepartureCreateTomorrow`: gọi `performDeparture(dlg.branch, {skipConfirm:true})`; null → về `stage:"choice"`; ok → create/convert với `ignoreReservedCode:true`.
+- [x] 14.51.4 [src/App.jsx](../../../src/App.jsx) — `departureConfirmDialog` thêm field `stage` ("choice" | "confirm"); 2 chỗ mở popup set `stage:"choice"`.
+- [x] 14.51.5 [src/App.jsx](../../../src/App.jsx) — modal 2 bước: choice (hôm nay / ngày mai) ↔ confirm (đã xuất bến chưa, nút "Chưa" quay lại choice).
+- [x] 14.51.6 Build check pass.
 
