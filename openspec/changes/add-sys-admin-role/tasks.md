@@ -549,6 +549,55 @@ Vấn đề (verbatim): đơn nháp chi nhánh nào tạo thì chỉ có user ch
 - [x] 14.43.3 Build check pass.
 - [ ] 14.43.4 (Cần chạy tay) User cần chạy `fix-draft-branch-restriction.sql` trên Supabase SQL Editor để áp dụng RLS policy mới (không tự động deploy qua code).
 
+### 14.44 Danh Sách Bốc Xếp — sắp xếp mã đơn tăng dần + cột "Hàng Ghép"
 
+Vấn đề (verbatim): "bảng danh sách bốc xếp, sửa 2 chỗ: 1. thứ tự mã đơn từ nhỏ -> lớn 2. thêm 1 cột 'Hàng Ghép', nằm sau cột vị trí trong ngoài các ô để trống để nhân viên tự điền".
 
+Rule nghiệp vụ:
+- Mã đơn trong bảng bốc xếp sắp xếp tăng dần (nhỏ → lớn).
+- Cột "Hàng Ghép" nằm sau cột Trong/Ngoài, ô trống để nhân viên tự điền (free text), ô vừa đủ ~5 ký tự (VD HC001), trống thì để trống (không hiện dấu "-").
+- Chỉ nhân viên đúng chi nhánh mới điền được (giống Trong/Ngoài); boss không sửa.
+
+Implementation:
+- [x] 14.44.1 [src/App.jsx](../../../src/App.jsx) — `warehouseFilteredBills` thêm `.sort((a,b)=>(a.bill_code||"zzzz").localeCompare(b.bill_code||"zzzz"))`; `handlePrintWarehouseList` cũng sort tương tự.
+- [x] 14.44.2 [src/App.jsx](../../../src/App.jsx) — thêm `<th>Hàng Ghép</th>` sau cột Ngoài (màn hình + bản in), cập nhật colSpan empty-state 10→11.
+- [x] 14.44.3 [src/App.jsx](../../../src/App.jsx) — `handleCombinedGoodsSave(billId, value)`: UPDATE `bills.combined_goods` (trim → null nếu rỗng), chặn boss + cross-branch, cập nhật `setBills` tại chỗ sau khi lưu.
+- [x] 14.44.4 [add-combined-goods.sql](../../../add-combined-goods.sql) — `ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS combined_goods TEXT;` (idempotent). **Cần chạy tay trên Supabase.**
+- [x] 14.44.5 Build check pass.
+
+### 14.45 Fix bug mất ký tự khi gõ ô "Hàng Ghép" và các ô "Số tiền"
+
+Vấn đề (verbatim): "ô hàng ghép... nó hay có hiện tượng mất chữ, phải nhập lại"; "ở phiếu chi, field số tiền nhiều khi nhập ko ăn, phải nhập lại".
+
+Nguyên nhân: input controlled lấy value từ state toàn App (~7000 dòng). Mỗi keystroke `setBills`/format lại → re-render toàn bộ + realtime refetch (debounce 800ms) ghi đè `bills` giữa lúc gõ → con trỏ nhảy / rớt ký tự. Ô số tiền còn bị format ngàn (`1.000`) làm nhảy cursor.
+
+Implementation:
+- [x] 14.45.1 [src/App.jsx](../../../src/App.jsx) — tách component `CombinedGoodsInput`: state cục bộ (`text`), chỉ sync từ prop khi KHÔNG focus (`focusedRef`), lưu DB `onBlur`. Realtime refetch không ghi đè lúc đang gõ.
+- [x] 14.45.2 [src/App.jsx](../../../src/App.jsx) — tách component `MoneyInput` dùng chung: state cục bộ giữ chuỗi đã format ngàn, báo giá trị số ra ngoài qua `onChange`; sync từ prop khi không focus → hết nhảy con trỏ / rớt ký tự.
+- [x] 14.45.3 [src/App.jsx](../../../src/App.jsx) — áp dụng `MoneyInput` cho 3 ô: Thêm phiếu chi (`expAmount`), Sửa phiếu chi (`expEditAmount`), Số tiền thực thu khi thanh toán (`actualAmountPaid`).
+- [x] 14.45.4 Build check pass.
+
+### 14.46 Sys Admin — đổi username cho user (bỏ tiền tố lộ role)
+
+Vấn đề (verbatim): "trong username có cả role. hacker có thể dựa vào đây để đoán dc các role của hệ thống" → muốn đổi username toàn bộ user; "sys_admin cho đổi username, password luôn đi".
+
+Rule nghiệp vụ:
+- Username gắn chặt với email đăng nhập `username@hoancau.internal` → đổi username PHẢI đổi đồng thời: `auth.users.email` + `user_metadata.username` + `profiles.username`. Chỉ đổi 1 nơi → user không login được.
+- Thứ tự: cập nhật auth TRƯỚC, profiles SAU → nếu lỗi giữa chừng user vẫn login được bằng username cũ (không bị kẹt).
+- Mật khẩu giữ nguyên khi đổi username. Kiểm tra trùng tên + định dạng `[a-z0-9_.-]`.
+
+Implementation:
+- [x] 14.46.1 [supabase/functions/admin-users/index.ts](../../../supabase/functions/admin-users/index.ts) — `actionUpdateProfile` nhận thêm `username`: validate regex + check trùng (`profiles` khác id), update auth email + metadata TRƯỚC (email `newUsername@hoancau.internal`), rồi `profiles.username`; ghi vào `changes`.
+- [x] 14.46.2 [src/SysAdminPanel.jsx](../../../src/SysAdminPanel.jsx) — `EditProfileModal`: ô Username từ read-only → sửa được, thêm vào form state + gửi kèm `update_profile`. Password reset đã có sẵn ở nút 🔑 (action `reset_password`).
+- [x] 14.46.3 Deploy `npx supabase functions deploy admin-users --no-verify-jwt` (đã chạy — bản cũ bỏ qua field username nên "save thành công" nhưng không đổi).
+- [x] 14.46.4 Build check pass.
+
+### 14.47 Script đổi username hàng loạt (one-off)
+
+Vấn đề: cần đổi username cho toàn bộ user hiện có (bỏ tiền tố `mem_`/`ad_`/`boss_`).
+
+Implementation:
+- [x] 14.47.1 [scripts/rename-users.mjs](../../../scripts/rename-users.mjs) — đọc map `scripts/rename-users.map.json` (tên_cũ → tên_mới), dùng service_role: validate + check trùng, `auth.admin.updateUserById({email, user_metadata})` rồi `profiles.username`. Hỗ trợ `--dry-run`.
+- [x] 14.47.2 [scripts/rename-users.map.example.json](../../../scripts/rename-users.map.example.json) — file mẫu ánh xạ. User copy → `rename-users.map.json` rồi sửa.
+- [x] 14.47.3 Lưu ý: dữ liệu lịch sử cũ (`audit_log.username`, `*_snapshot`) giữ tên cũ — không ảnh hưởng đăng nhập.
 
