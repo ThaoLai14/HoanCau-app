@@ -656,6 +656,7 @@ Implementation:
 - [x] 14.51.4 [src/App.jsx](../../../src/App.jsx) — `departureConfirmDialog` thêm field `stage` ("choice" | "confirm"); 2 chỗ mở popup set `stage:"choice"`.
 - [x] 14.51.5 [src/App.jsx](../../../src/App.jsx) — modal 2 bước: choice (hôm nay / ngày mai) ↔ confirm (đã xuất bến chưa, nút "Chưa" quay lại choice).
 - [x] 14.51.6 Build check pass.
+- [x] 14.51.7 Fix (2026-10-19): "Rồi, tạo đơn ngày mai" KHÔNG còn bị chặn bởi validation số kiện Trong/Ngoài. Lý do: xe đã xuất bến thì đếm số kiện lúc này vô nghĩa (thủ kho vẫn sửa count sau được). Thêm `opts.skipTripChecks` cho `performDeparture` (bỏ qua check "chuyến rỗng" + "khớp số kiện"); `handleDepartureCreateTomorrow` truyền `skipTripChecks:true`. Nút Xuất Bến ở màn kho vẫn giữ nguyên validation đầy đủ.
 
 ### 14.52 Bill in — 2 bản giống hệt nhau + ký giao/ký nhận
 
@@ -665,4 +666,139 @@ Implementation:
 - [x] 14.52.1 [src/App.jsx](../../../src/App.jsx) — bỏ section riêng "Xác nhận nhận hàng (chành xe lưu)"; `renderBillCopy` không còn tham số `isDepotCopy`, 2 bản (khách giữ + chành xe giữ) render giống hệt nhau.
 - [x] 14.52.2 [src/App.jsx](../../../src/App.jsx) — dưới section "Ghi chú": thêm 2 cột ký — trái "Kí giao", phải "Kí nhận", mỗi cột có "(Ghi rõ họ tên)".
 - [x] 14.52.3 Build check pass.
+- [x] 14.52.4 Sửa chính tả "Kí" → "Ký" (Ký giao / Ký nhận); "(Ghi rõ họ tên)" nằm sát dưới nhãn; chừa khoảng trống `pb-14` bên dưới để còn chỗ ký.
+
+### 14.53 Form sửa nháp — ẩn nút "Lưu Thay Đổi" + "Hủy Thay Đổi"
+
+Vấn đề (verbatim): "khi mở lại bill nháp, thì ẩn 2 button liên quan đến lưu bill nháp và hủy thay đổi đi. ẩn trên UI, chứ code vẫn giữ nhé."
+
+Implementation:
+- [x] 14.53.1 [src/App.jsx](../../../src/App.jsx) — nhánh `editingDraftId` của action bar form: bọc 2 nút "💾 Lưu Thay Đổi" (`handleSaveDraft`) và "❌ Hủy Thay Đổi" trong `{false && (...)}` — giữ code nhưng không render. Các nút còn lại (Hủy Đơn Nháp, Xem Bill In, Hoàn Tất Và Tạo Đơn, Tạo Đơn Mới) giữ nguyên.
+
+### 14.54 Chi tiết đơn — nút "In bill giao" (in 1 bản cho khách)
+
+Vấn đề (verbatim): "ở flow delivery, sau button tạo đơn mới, thêm 1 button in bill giao. in lại toàn bộ thông tin bill giao cho khách, 1 bản thôi. ko in lại bản cho chành xe".
+
+Implementation:
+- [x] 14.54.1 [src/App.jsx](../../../src/App.jsx) — thêm state `billPreviewSingle`; nút "🖨️ In bill giao" trong action bar chi tiết đơn (sau "+ Tạo đơn mới") → `setBillPreviewSingle(true)` + mở preview.
+- [x] 14.54.2 [src/App.jsx](../../../src/App.jsx) — modal preview: khi `billPreviewSingle` chỉ render 1 `renderBillCopy()` (bỏ divider + bản thứ 2); header đổi thành "Bill Giao (1 bản cho khách)".
+- [x] 14.54.3 [src/App.jsx](../../../src/App.jsx) — reset `billPreviewSingle=false` ở nút Đóng + × để lần sau "Xem Bill In" vẫn ra 2 bản.
+
+### 14.55 Fix bug: "Ngày giao dự kiến" không được lưu DB (trống khi xem lại bill)
+
+Vấn đề (verbatim): "ủa sao lúc xem lại in bill giao, mất data của field ngày giao dự kiến rồi".
+
+Nguyên nhân: form có thu thập `expectedDeliveryDate` nhưng KHÔNG payload nào (create/convert/update draft) ghi `expected_delivery_date` vào DB → bill đã lưu đọc ra null → preview trống. (Lúc tạo mới thì preview đọc từ form state nên vẫn thấy.)
+
+Implementation:
+- [x] 14.55.1 [src/App.jsx](../../../src/App.jsx) — thêm `expected_delivery_date: data.expectedDeliveryDate || null` vào 3 payload: `executeCreateBill` (buildBillPayload), `executeConvertDraftToBill`, `executeUpdateDraft`.
+- [x] 14.55.2 [add-expected-delivery-date.sql](../../../add-expected-delivery-date.sql) — `ALTER TABLE public.bills ADD COLUMN IF NOT EXISTS expected_delivery_date TEXT;` (text dd/mm/yyyy, khớp read code). **Cần chạy tay trên Supabase.**
+- [ ] 14.55.3 Lưu ý: bill tạo TRƯỚC fix vẫn trống field này (dữ liệu cũ không có); chỉ bill tạo/sửa sau khi chạy migration mới có.
+
+### 14.56 Khóa sửa/hủy đơn + sửa Trong/Ngoài theo xuất bến / ngày lịch
+
+Vấn đề (verbatim): "1. screen xuất bến, qua ngày mới (ngày theo lịch...) thì ko edit dc nữa. 2. đơn trong ngày chưa xuất bến còn sửa/hủy dc, còn bấm xuất bến rồi thì ko sửa, hủy đơn dc nữa. lí do là xe đã đi rồi, thì hàng đi rồi, ko sửa bill dc nữa."
+
+Rule nghiệp vụ (xác nhận qua Q&A 2026-10-20):
+- **Rule 1 — Bốc Xếp (Trong/Ngoài + Hàng Ghép):** khóa khi `business_date < ngày lịch hôm nay`. Danh sách bốc xếp của ngày nào chỉ sửa được đúng ngày lịch đó (đơn business_date=20 sửa ngày 20, khóa từ 21; đơn business_date=21 sửa ngày 21, khóa từ 22).
+- **Rule 2 — Sửa/Hủy đơn:** khóa khi chuyến của đơn ĐÃ xuất bến (`branchSessions[branch].business_date > bill.business_date`). Đơn chuyến mai (business_date tương lai, chưa xuất bến) vẫn sửa/hủy tới khi chuyến đó xuất bến.
+- sys_admin bypass cả 2 rule.
+- Nút "Cập Nhật Cước Phí" (quote_later) GIỮ NGUYÊN rule §14.37 riêng (chi nhánh nhận cập nhật cước sau khi hàng tới) — không áp Rule 2.
+
+Implementation:
+- [x] 14.56.1 [src/App.jsx](../../../src/App.jsx) — warehouse row: `canEditWarehouse` thêm `warehouseDayOpen = sys_admin || business_date >= getVNTodayDate()`.
+- [x] 14.56.2 [src/App.jsx](../../../src/App.jsx) — `handleUpdateLocationCounts` + `handleCombinedGoodsSave`: chặn server-side khi `business_date < today` (sys_admin bypass).
+- [x] 14.56.3 [src/App.jsx](../../../src/App.jsx) — `canModify` (Sửa Đơn + Hủy Đơn pending, và Hủy Đơn quote_later) đổi từ `isToday = business_date===today` sang `tripDeparted = branchSessions[branch].business_date > bill.business_date` → `canModify = sys_admin || (sameBranch && !tripDeparted)`.
+- [x] 14.56.4 Build check pass.
+
+### 14.57 Form sửa đơn — ẩn "Hủy Đơn", đổi "Hủy" → "Hủy Thay Đổi"
+
+Vấn đề (verbatim): "lúc sửa đơn, bỏ button Hủy đơn đi. còn button Hủy thì ghi rõ ra là Hủy thay đổi. để tránh user thao tác nhầm lẫn".
+
+Implementation:
+- [x] 14.57.1 [src/App.jsx](../../../src/App.jsx) — nhánh `editingBillId` action bar: bọc nút "🚫 Hủy Đơn" trong `{false && (...)}` (giữ code, không render); đổi label nút "❌ Hủy" → "❌ Hủy Thay Đổi".
+
+### 14.58 Lịch — chuyển ngày nhanh + chọn nhanh tháng/năm
+
+Vấn đề: lịch cũ chỉ lướt từng tháng bằng ‹ ›, muốn xem 01/2025 phải bấm nhiều lần. Và màn Bốc Xếp thiếu nút lùi/tới ngày.
+
+Implementation:
+- [x] 14.58.1 [src/App.jsx](../../../src/App.jsx) — Bốc Xếp: thêm nút « / » lùi/tới 1 ngày cạnh ô ngày (style đồng bộ trang Doanh Thu).
+- [x] 14.58.2 `VNDateInput`: header lịch thêm 2 dropdown chọn nhanh **Tháng** + **Năm** (năm 2020 → nay+2, tự mở rộng nếu view ngoài khoảng).
+- [x] 14.58.3 `VNMonthInput`: thêm dropdown chọn nhanh **Năm**.
+
+### 14.59 Danh Sách Bốc Xếp — In: thêm Tải Word + tối ưu bản in
+
+Vấn đề: cần in ra file Word; các cột rộng/hẹp chưa hợp lý; nhiều trang thì mỗi tờ phải có tiêu đề; bản in dính header/footer trình duyệt (about:blank, ngày, URL).
+
+Rule: cột Trong/Ngoài/Giá cước/Hàng Ghép hẹp lại, Người gửi/nhận rộng ra; bỏ cột Bảo Quản khi in; title (chi nhánh + ngày + tổng đơn) lặp đầu mỗi trang; footer số trang x/y (ẩn nếu 1 trang).
+
+Implementation:
+- [x] 14.59.1 [src/App.jsx](../../../src/App.jsx) `handlePrintWarehouseList` — thêm nút "📄 Tải Word (.doc)" (MSO HTML: thead lặp header, footer field `IF NUMPAGES>1 → PAGE/NUMPAGES`).
+- [x] 14.59.2 `<colgroup>` + `table-layout:fixed` tối ưu độ rộng; bỏ cột Bảo Quản; nowrap ô giá cước.
+- [x] 14.59.3 Title + tiêu đề cột đưa vào `<thead>` để lặp mỗi trang; tiêu đề cột canh giữa.
+- [x] 14.59.4 `@page { margin: 0 }` + `.sheet` padding khi in → ẩn header/footer trình duyệt.
+
+### 14.60 Nhắc nhở hằng ngày (16:00 kiểm bốc xếp / 16:40 xuất bến)
+
+Vấn đề: cần popup nhắc kiểm danh sách bốc xếp (16:00) và nhắc bấm Xuất Bến để reset mã ngày mới (16:40), hiện trên mọi màn hình.
+
+Rule: trừ boss & sys_admin; chỉ hiện cho user **đã mở app TRƯỚC mốc giờ** (login trễ / qua ngày / sau 18:00 → không hiện); mỗi mốc 1 lần/phiên; có nút "Đã hiểu, đóng".
+
+Implementation:
+- [x] 14.60.1 [src/App.jsx](../../../src/App.jsx) — `DAILY_REMINDERS` + `getVNNowHHMM`; effect so `giờ-mở-app < mốc ≤ now`, cap 18:00; modal overlay z cao nhất.
+
+### 14.61 MoneyInput — nhập tiền theo đơn vị nghìn (tự thêm "000")
+
+Vấn đề: user nhập nhầm 50đ (ý 50.000). Muốn gõ 5 → 5.000, 50 → 50.000; số 0 chỉ hiện khi bắt đầu gõ.
+
+Implementation:
+- [x] 14.61.1 [src/App.jsx](../../../src/App.jsx) `MoneyInput` — base = số gõ, giá trị thật = base×1000, con trỏ ghim trước ".000". Áp mọi ô tiền (cước phí, giá trị hàng, cước hoàn, thực thu, phiếu chi) — chuyển 3 ô `<input>` thô sang MoneyInput.
+
+### 14.62 Chống double-submit (tạo đơn / xuất bến / lưu nháp)
+
+Vấn đề: nút "Tạo đơn ngày mai" không disable + không loading → user bấm 4 lần → mỗi lần `performDeparture` đẩy 1 ngày → tạo 4 chuyến/4 bill rác (01GLA11..02GLA13). KHÔNG phải lỗi mã trùng (UNIQUE vẫn đúng).
+
+Implementation:
+- [x] 14.62.1 [src/App.jsx](../../../src/App.jsx) `runExclusive` (ref chặn đồng thời + state `isSubmitting`); wrap các nút ghi: Tạo Hoá Đơn, Lưu Nháp, Lưu Cước Phí, "Rồi tạo đơn ngày mai", "Tạo đơn hôm nay", "OK — Cập nhật" + disable + loading.
+- [x] 14.62.2 `cleanup-gla-double-submit.sql` — xóa 3 bill rác GL (giữ 01GLA11) + reset `branch_sessions` GL. Đã chạy 2026-10-24.
+- [x] 14.62.3 Phủ `runExclusive` + disable + loading cho TẤT CẢ nút ghi dữ liệu còn thiếu: Hoàn tất giao hàng, Xác nhận thanh toán, Xác nhận hoàn hàng/tiêu hủy, Xác nhận đã hoàn hàng, Thu tiền hoàn, Lưu cước hoàn, Xác nhận hủy đơn, Xuất Bến, Khóa sổ (×2), Xóa phiếu chi, + 3 form (thêm/sửa phiếu chi, thêm/sửa khách).
+
+### 14.63 Intake — chọn khách khóa SĐT + cảnh báo trùng tên/SĐT
+
+Vấn đề: đổi SĐT khách ngay trên form intake vô tình tạo khách TRÙNG TÊN (resolve theo tên+số, số mới → không khớp → tạo mới), không có audit trên khách gốc. Đơn cũ KHÔNG mất.
+
+Rule: chọn khách từ gợi ý → khóa ô SĐT (nút "✕ Chọn khách khác" để bỏ chọn); cảnh báo trùng tên/SĐT hiện NGAY khi gõ (inline, không chờ submit); đổi SĐT khách cũ vẫn phải qua màn Quản Lý Khách Hàng; không thêm cột nickname (user tự ghi "Bình Tamba").
+
+Implementation:
+- [x] 14.63.1 [src/ClientAutocomplete.jsx](../../../src/ClientAutocomplete.jsx) — state `selected` (khóa SĐT khi chọn khách có số); effect clear khi sửa tên; `dupWarning` (trùng tên liệt kê khách + số, trùng SĐT báo chủ sở hữu). Gói gọn trong component → không đụng `resolveOrCreateClient`.
+- [x] 14.63.2 Không cảnh báo khi combo (tên + SĐT) khớp đúng 1 khách đã có (vd mở lại bill nháp = tự match chính khách đó) — chỉ cảnh báo khi có rủi ro tạo trùng thật.
+
+### 14.64 (Cần user chạy) Bật Supabase Realtime để app tự đồng bộ
+
+Vấn đề: user phải F5 mới thấy data mới. App ĐÃ có subscribe Realtime + auto-refetch ([src/App.jsx](../../../src/App.jsx) ~L1190) nhưng publication chưa bật trên DB.
+
+- [x] 14.64.1 Đã chạy `enable-realtime.sql` trên Supabase (2026-10-24) — các bảng vào publication `supabase_realtime`, app tự đồng bộ không cần F5.
+
+### 14.65 Quên mật khẩu qua email thật (cho sys_admin)
+
+Vấn đề: email đăng nhập là ảo `username@hoancau.internal` → không reset được qua email. Sys_admin quên mật khẩu mà không có sys_admin khác thì phải vào Supabase Dashboard. Muốn sys_admin tự khôi phục qua email thật.
+
+Rule: chỉ cần email thật cho tài khoản sys_admin (không làm cho toàn bộ nhân viên). Nhân viên quên mật khẩu → nhờ sys_admin đặt lại. Giữ nguyên đăng nhập bằng username cho nhân viên.
+
+Implementation (code):
+- [x] 14.65.1 [src/LoginScreen.jsx](../../../src/LoginScreen.jsx) — ô "Tên đăng nhập" có dấu `@` → dùng làm email thật (sys_admin); không có `@` → ghép `@hoancau.internal` (nhân viên, giữ nguyên). Màn login hiển thị câu tĩnh "Bạn cần đổi mật khẩu? Liên hệ Quản Trị Viên hệ thống để đổi cho bạn." (bỏ nút tự gửi link cho gọn/đỡ rối). Khôi phục qua link reset vẫn dùng được khi gửi từ Supabase Dashboard → `ResetPasswordScreen`.
+- [x] 14.65.2 [src/ResetPasswordScreen.jsx](../../../src/ResetPasswordScreen.jsx) — màn đặt lại mật khẩu khi mở app từ link recovery (`auth.updateUser({ password })` + signOut).
+- [x] 14.65.3 [src/App.jsx](../../../src/App.jsx) — state `recoveryMode`; bắt event `PASSWORD_RECOVERY` trong `onAuthStateChange`; gate render `ResetPasswordScreen` trước gate login.
+- [x] 14.65.4 [scripts/set-user-email.mjs](../../../scripts/set-user-email.mjs) — đổi `auth.users.email` của 1 user sang email thật (service_role).
+
+Cần user làm trên Supabase (config, ngoài code):
+- [ ] 14.65.5 Bật **custom SMTP** (Resend/SendGrid/Gmail) trong Supabase → Auth → SMTP. Mail mặc định bị rate-limit nặng, không dùng được.
+- [ ] 14.65.6 Set **Site URL** + Redirect URLs = URL app (Auth → URL Configuration) để link reset trỏ đúng.
+- [ ] 14.65.7 Đổi email sys_admin sang email thật: `node scripts/set-user-email.mjs --username <sys> --email <gmail>` (hoặc Dashboard → Auth → Users). Sau đó sys_admin đăng nhập bằng email thật.
+
+
+
+
+
 

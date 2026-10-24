@@ -31,6 +31,8 @@ export const FIELD_LABELS = {
   bill_code: "Mã đơn",
   amount_paid: "Số tiền thu",
   recipient_type: "Người nhận",
+  return_fee: "Cước hoàn (về)",
+  return_confirmed_at: "Hoàn hàng về",
   // clients
   fullname: "Họ tên",
   address: "Địa chỉ",
@@ -60,6 +62,8 @@ export const ENUM_LABELS = {
     delivered: "Đã giao",
     cancelled: "Đã huỷ",
     draft: "Nháp",
+    returned: "Hoàn hàng",
+    destroyed: "Tiêu hủy",
   },
   recipient_type: {
     self: "Chính chủ",
@@ -72,6 +76,9 @@ export const ACTION_LABELS = {
   bill_create:           { text: "tạo đơn",                 icon: "🆕",  color: "emerald" },
   bill_update:           { text: "sửa đơn",                 icon: "✏️",  color: "amber"   },
   bill_cancel:           { text: "huỷ đơn",                 icon: "❌",  color: "red"     },
+  bill_returned:         { text: "hoàn hàng",             icon: "↩️",  color: "orange"  },
+  bill_destroyed:        { text: "tiêu hủy hàng",            icon: "🗑️",  color: "red"     },
+  bill_return_confirmed: { text: "đã hoàn hàng cho khách",     icon: "✅",  color: "blue"    },
   bill_delivered:        { text: "giao hàng",               icon: "🚚",  color: "blue"    },
   bill_payment_received: { text: "thu cước",                icon: "💰",  color: "emerald" },
   client_create:         { text: "tạo khách",               icon: "👤",  color: "emerald" },
@@ -89,7 +96,7 @@ export const ACTION_LABELS = {
   category_delete:       { text: "xoá danh mục chi",        icon: "🗑️",  color: "red"     },
 };
 
-const MONEY_FIELDS = new Set(["shipping_fee", "goods_value", "amount", "amount_paid"]);
+const MONEY_FIELDS = new Set(["shipping_fee", "goods_value", "amount", "amount_paid", "return_fee"]);
 const BOOL_FIELDS = new Set([
   "is_home_delivery", "no_declared_value", "self_packed",
   "risk_warning", "require_id_check", "export_vat",
@@ -124,7 +131,9 @@ export function formatValue(field, value) {
  */
 export function renderChanges(changes) {
   if (!changes || typeof changes !== "object") return [];
-  return Object.entries(changes).map(([field, val]) => {
+  return Object.entries(changes)
+    .filter(([field]) => field !== "return_confirmed_at") // field kỹ thuật, không hiển thị
+    .map(([field, val]) => {
     const [oldVal, newVal] = Array.isArray(val) ? val : [null, val];
     return {
       label: FIELD_LABELS[field] || field,

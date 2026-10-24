@@ -24,6 +24,7 @@ export default function ClientAutocomplete({
 }) {
   const [open, setOpen] = useState(false);
   const [skipNextOpen, setSkipNextOpen] = useState(false);
+  const [selected, setSelected] = useState(null); // khách đã chọn từ gợi ý → khóa ô SĐT
   const wrapRef = useRef(null);
 
   // Đóng dropdown khi click ra ngoài
@@ -36,6 +37,13 @@ export default function ClientAutocomplete({
     document.addEventListener("mousedown", onDocClick);
     return () => document.removeEventListener("mousedown", onDocClick);
   }, []);
+
+  // Bỏ chọn khách khi tên bị sửa khác đi / form reset → mở khóa ô SĐT.
+  useEffect(() => {
+    if (selected && (nameValue || "").trim().toLowerCase() !== (selected.fullname || "").trim().toLowerCase()) {
+      setSelected(null);
+    }
+  }, [nameValue, selected]);
 
   const keyword = nameValue.trim().toLowerCase();
 
@@ -70,9 +78,26 @@ export default function ClientAutocomplete({
   const handlePick = (client, phone) => {
     onNameChange(client.fullname || "");
     onPhoneChange(phone?.phone_number || "");
+    setSelected(phone ? client : null); // chỉ khóa khi khách có SĐT sẵn
     setSkipNextOpen(true);
     setOpen(false);
   };
+
+  // Cảnh báo trùng (chỉ khi KHÔNG chọn từ gợi ý = đang nhập tay).
+  const dupWarning = useMemo(() => {
+    if (selected) return null;
+    const nm = (nameValue || "").trim().toLowerCase();
+    const ph = (phoneValue || "").trim();
+    if (nm.length < 1) return null;
+    const sameName = clients.filter(c => c && !c.is_delete && (c.fullname || "").trim().toLowerCase() === nm);
+    const phoneOwner = ph
+      ? (clients.find(c => c && !c.is_delete && (c.client_phones || []).some(p => p.phone_number === ph)) || null)
+      : null;
+    // Combo (tên + số) khớp đúng 1 khách đã có → chính khách đó (vd mở lại bill nháp) → không cảnh báo.
+    if (phoneOwner && (phoneOwner.fullname || "").trim().toLowerCase() === nm) return null;
+    if (sameName.length === 0 && !phoneOwner) return null;
+    return { sameName, phoneOwner };
+  }, [clients, nameValue, phoneValue, selected]);
 
   return (
     <div className="space-y-3" ref={wrapRef}>
@@ -171,6 +196,18 @@ export default function ClientAutocomplete({
         )}
       </div>
 
+      {selected && (
+        <div className="flex justify-end">
+          <button
+            type="button"
+            onMouseDown={(e) => { e.preventDefault(); setSelected(null); onNameChange(""); onPhoneChange(""); }}
+            className="text-[11px] font-semibold text-emerald-700 hover:underline"
+          >
+            ✕ Chọn khách khác
+          </button>
+        </div>
+      )}
+
       <div>
         <label className="block text-xs text-gray-400 mb-1">SĐT</label>
         <div className="relative">
@@ -180,9 +217,12 @@ export default function ClientAutocomplete({
             value={phoneValue}
             onChange={(e) => onPhoneChange(e.target.value)}
             placeholder={phonePlaceholder}
-            className="w-full border rounded px-3 py-1.5 pr-8 text-sm"
+            disabled={!!selected}
+            className={`w-full border rounded px-3 py-1.5 pr-8 text-sm ${selected ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""}`}
           />
-          {phoneValue && (
+          {selected ? (
+            <span className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 text-xs" title="SĐT khóa theo khách đã chọn">🔒</span>
+          ) : phoneValue ? (
             <button
               type="button"
               onClick={() => onPhoneChange("")}
@@ -191,9 +231,30 @@ export default function ClientAutocomplete({
             >
               ✕
             </button>
-          )}
+          ) : null}
         </div>
       </div>
+
+      {dupWarning && (
+        <div className="bg-amber-50 border border-amber-200 rounded px-2.5 py-2 text-[11px] text-amber-800 space-y-1">
+          {dupWarning.phoneOwner && (
+            <p>ℹ️ Số này đã thuộc khách <b>{dupWarning.phoneOwner.fullname}</b>. Nếu đúng người → chọn ở gợi ý.</p>
+          )}
+          {dupWarning.sameName.length > 0 && (
+            <div className="space-y-0.5">
+              <p>⚠️ Đã có <b>{dupWarning.sameName.length}</b> khách trùng tên:</p>
+              <ul className="list-disc pl-4">
+                {dupWarning.sameName.slice(0, 4).map((c) => (
+                  <li key={c.id}>
+                    {c.fullname} — {(c.client_phones || []).filter((p) => p.type !== "old").map((p) => p.phone_number).join(", ") || "chưa có số"}
+                  </li>
+                ))}
+              </ul>
+              <p>Đúng người → chọn ở gợi ý. Nếu <b>khách mới</b> → gợi ý thêm chú thích vào tên để phân biệt các khách trùng. Đổi SĐT khách cũ: vào màn hình <b>Quản Lý Khách Hàng</b>.</p>
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }

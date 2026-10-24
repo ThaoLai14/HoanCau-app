@@ -6,6 +6,20 @@ export default function LoginScreen({ onLogin }) {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [errMsg, setErrMsg] = useState("");
+  // Gửi mail đặt lại mật khẩu về email quản trị đã đăng ký (không bắt gõ email).
+  const [forgotMsg, setForgotMsg] = useState("");
+  const [forgotSending, setForgotSending] = useState(false);
+  const adminRecoveryEmail = import.meta.env.VITE_ADMIN_RECOVERY_EMAIL || "thanh.thao14190@gmail.com";
+
+  const sendReset = async () => {
+    setForgotMsg("");
+    setForgotSending(true);
+    try {
+      await supabase.auth.resetPasswordForEmail(adminRecoveryEmail, { redirectTo: window.location.origin });
+    } catch (_) { /* không tiết lộ lỗi */ }
+    setForgotMsg("Đã gửi mail đặt lại cho Quản Trị Viên. Vui lòng kiểm tra hộp thư quản trị.");
+    setForgotSending(false);
+  };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -15,7 +29,8 @@ export default function LoginScreen({ onLogin }) {
     try {
       const uname = username.trim().toLowerCase();
       if (!uname) throw new Error("Vui lòng nhập tên đăng nhập");
-      const email = `${uname}@hoancau.internal`;
+      // Có dấu @ → email thật (sys_admin); không thì ghép domain nội bộ (nhân viên).
+      const email = uname.includes("@") ? uname : `${uname}@hoancau.internal`;
 
       // 1. Đăng nhập qua Supabase Auth (JWT + bcrypt server-side)
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
@@ -119,6 +134,21 @@ export default function LoginScreen({ onLogin }) {
             {loading ? "⏳ Đang đăng nhập..." : "🔐 Đăng Nhập"}
           </button>
         </form>
+
+        <div className="px-6 pb-3 text-center space-y-1.5">
+          <p className="text-[11px] text-gray-500">
+            Bạn cần đổi mật khẩu? <span className="text-gray-600 font-semibold">Liên hệ Quản Trị Viên hệ thống để đổi cho bạn.</span>
+          </p>
+          <button
+            type="button"
+            onClick={sendReset}
+            disabled={forgotSending}
+            className="text-[11px] text-orange-600 hover:underline font-semibold disabled:text-gray-400"
+          >
+            {forgotSending ? "⏳ Đang gửi..." : "Gửi mail cho Quản Trị Viên"}
+          </button>
+          {forgotMsg && <p className="text-[11px] text-emerald-700 font-semibold">{forgotMsg}</p>}
+        </div>
 
         <div className="px-6 pb-5 text-center">
           <p className="text-[10px] text-gray-400">© 2026 Vận Tải Hoàn Cầu</p>

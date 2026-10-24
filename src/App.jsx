@@ -10,6 +10,7 @@ import ClientHistorySection from "./ClientHistorySection";
 import ExpenseHistorySection from "./ExpenseHistorySection";
 import SysAdminPanel from "./SysAdminPanel";
 import MyAccountScreen from "./MyAccountScreen";
+import ResetPasswordScreen from "./ResetPasswordScreen";
 import SessionMonitor from "./SessionMonitor";
 import MfaFlow from "./MfaFlow";
 import { SysAdminPinProvider, useSysAdminUnlock } from "./SysAdminPinModal";
@@ -63,6 +64,31 @@ const isAfterVNDepartureCutoff = () => {
   const m = Number(parts.find(p => p.type === "minute")?.value || 0);
   return h > DEPARTURE_CUTOFF_HOUR || (h === DEPARTURE_CUTOFF_HOUR && m >= DEPARTURE_CUTOFF_MIN);
 };
+
+// Giờ VN hiện tại dạng "HH:MM" (24h) — dùng cho nhắc nhở theo mốc giờ.
+const getVNNowHHMM = () => {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    hour: "2-digit", minute: "2-digit", hour12: false,
+    timeZone: "Asia/Ho_Chi_Minh",
+  }).formatToParts(new Date());
+  const h = parts.find(p => p.type === "hour")?.value || "00";
+  const m = parts.find(p => p.type === "minute")?.value || "00";
+  return `${h}:${m}`;
+};
+
+// Nhắc nhở hằng ngày (hiện mọi màn hình, trừ boss & sys_admin). Hiện 1 lần/ngày, có nút đóng.
+const DAILY_REMINDERS = [
+  {
+    id: "check-warehouse", time: "16:00", icon: "📋",
+    title: "Nhắc kiểm danh sách bốc xếp",
+    message: "Đã 16:00 — vui lòng kiểm tra lại danh sách hàng hóa bốc xếp hôm nay (Trong / Ngoài / Hàng ghép) trước khi xe chạy.",
+  },
+  {
+    id: "xuat-ben", time: "16:40", icon: "🚛",
+    title: "Nhắc bấm Xuất Bến",
+    message: "Đã 16:40 — nhớ bấm \"Xuất Bến\" để chốt chuyến và cập nhật mã đơn tiếp theo cho ngày mới.",
+  },
+];
 
 // Cộng N ngày cho date YYYY-MM-DD → trả YYYY-MM-DD
 const addDaysISO = (isoDate, n) => {
@@ -263,6 +289,7 @@ const groupBillsByCustomer = (bills, includePending) => {
     if (b.delivery_status === 'cancelled') return false;
     if (!['unpaid', 'quote_later'].includes(b.payment_status)) return false;
     if (b.delivery_status === 'delivered') return true;
+    if (b.delivery_status === 'returned') return true; // add-return-and-destroy-flow: đơn quay đầu chưa thu = công nợ
     if (b.delivery_status === 'pending' && includePending) return true;
     return false;
   });
@@ -307,7 +334,7 @@ const groupBillsByCustomer = (bills, includePending) => {
   return Array.from(groups.values()).map((g) => {
     const totalDebt = g.bills.reduce((sum, b) => {
       if (b.payment_status === 'quote_later') return sum;
-      const fee = Number(b.shipping_fee || 0);
+      const fee = Number(b.shipping_fee || 0) + Number(b.return_fee || 0); // cộng cước hoàn (nếu có)
       const paid = Number(b.actual_amount_paid || 0);
       return sum + Math.max(0, fee - paid);
     }, 0);
@@ -453,26 +480,53 @@ const formatMonthDisplay = (ym, sep = "/") => {
 
 // Ô nhập tiền (VND) có định dạng ngàn: state cục bộ để không nhảy con trỏ / mất ký tự khi gõ nhanh.
 function MoneyInput({ value, onChange, className, placeholder, required, autoFocus }) {
-  const [text, setText] = useState(() => formatNumber(value));
+  // Nhập theo đơn vị NGHÌN: gõ 5 → 5.000, 50 → 50.000 (tự thêm "000" ở đuôi).
+  // base = phần người dùng gõ; giá trị thật phát ra = base * 1000.
+  const SUFFIX = ".000";
+  const toBase = (v) => {
+    const n = Number(v);
+    if (!v || !n) return "";
+    return String(Math.round(n / 1000));
+  };
+  const [base, setBase] = useState(() => toBase(value));
   const focusedRef = useRef(false);
+  const inputRef = useRef(null);
   useEffect(() => {
-    if (!focusedRef.current) setText(formatNumber(value));
+    if (!focusedRef.current) setBase(toBase(value));
   }, [value]);
+
+  const display = base === "" ? "" : formatNumber(base) + SUFFIX;
+
+  // Đặt con trỏ ngay trước ".000" để gõ/xoá luôn tác động vào phần base.
+  const pinCursor = (baseStr) => {
+    const el = inputRef.current;
+    if (!el) return;
+    const pos = baseStr === "" ? 0 : formatNumber(baseStr).length;
+    requestAnimationFrame(() => { try { el.setSelectionRange(pos, pos); } catch (_) { /* ignore */ } });
+  };
+
+  const handleChange = (e) => {
+    let digits = e.target.value.replace(/\D/g, "");
+    // Bỏ tối đa 3 số 0 ở đuôi (phần "000" tự thêm) để lấy lại base người gõ.
+    if (digits) digits = digits.replace(/0{1,3}$/, "");
+    const newBase = digits;
+    setBase(newBase);
+    onChange(newBase === "" ? "" : String(Number(newBase) * 1000));
+    if (newBase !== "") pinCursor(newBase);
+  };
+
   return (
     <input
+      ref={inputRef}
       type="text"
       inputMode="numeric"
       autoFocus={autoFocus}
       required={required}
       placeholder={placeholder}
       className={className}
-      value={text}
-      onFocus={() => { focusedRef.current = true; }}
-      onChange={(e) => {
-        const digits = e.target.value.replace(/\D/g, "");
-        setText(formatNumber(digits));
-        onChange(digits);
-      }}
+      value={display}
+      onFocus={() => { focusedRef.current = true; if (base !== "") pinCursor(base); }}
+      onChange={handleChange}
       onBlur={() => { focusedRef.current = false; }}
     />
   );
@@ -628,6 +682,10 @@ function VNDateInput({ value, onChange, className, placeholder, ...rest }) {
   for (let i = 0; i < firstDow; i++) cells.push(null);
   for (let d = 1; d <= daysInMonth; d++) cells.push(d);
   const todayISO = localTodayISO();
+  // Dropdown năm: 2020 → năm nay +2, mở rộng nếu view đang ở ngoài khoảng.
+  const nowY = new Date().getFullYear();
+  const ymYears = [];
+  for (let y = Math.min(2020, viewYM.y); y <= Math.max(nowY + 2, viewYM.y); y++) ymYears.push(y);
 
   return (
     <span
@@ -665,9 +723,24 @@ function VNDateInput({ value, onChange, className, placeholder, ...rest }) {
           className="bg-white border rounded-lg shadow-xl p-2 text-sm"
           style={{ position: 'fixed', left: pos.left, top: pos.top, minWidth: '16rem', zIndex: 9999 }}
         >
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between mb-2 gap-1">
             <button type="button" onClick={prevMonth} className="px-2 py-1 rounded hover:bg-gray-100 text-orange-600 font-bold">‹</button>
-            <span className="font-bold text-gray-800">Tháng {viewYM.m}/{viewYM.y}</span>
+            <div className="flex items-center gap-1">
+              <select
+                value={viewYM.m}
+                onChange={(e) => setViewYM(v => ({ ...v, m: Number(e.target.value) }))}
+                className="border rounded px-1 py-0.5 text-sm font-semibold text-gray-800 outline-none focus:border-orange-500 cursor-pointer"
+              >
+                {Array.from({ length: 12 }, (_, i) => i + 1).map(m => <option key={m} value={m}>Tháng {m}</option>)}
+              </select>
+              <select
+                value={viewYM.y}
+                onChange={(e) => setViewYM(v => ({ ...v, y: Number(e.target.value) }))}
+                className="border rounded px-1 py-0.5 text-sm font-semibold text-gray-800 outline-none focus:border-orange-500 cursor-pointer"
+              >
+                {ymYears.map(y => <option key={y} value={y}>{y}</option>)}
+              </select>
+            </div>
             <button type="button" onClick={nextMonth} className="px-2 py-1 rounded hover:bg-gray-100 text-orange-600 font-bold">›</button>
           </div>
           <div className="grid grid-cols-7 gap-0.5 text-center text-[11px] font-semibold text-gray-500 mb-1">
@@ -765,6 +838,9 @@ function VNMonthInput({ value, onChange, className }) {
   const curM = value && /^\d{4}-\d{2}/.test(value) ? Number(value.slice(5, 7)) : null;
   const pick = (m) => { onChange({ target: { value: `${viewYear}-${String(m).padStart(2, "0")}` } }); setOpen(false); };
   const label = (value && /^\d{4}-\d{2}/.test(value)) ? `Tháng ${Number(value.slice(5, 7))}/${value.slice(0, 4)}` : "Chọn tháng";
+  const nowY = new Date().getFullYear();
+  const yearOpts = [];
+  for (let y = Math.min(2020, viewYear); y <= Math.max(nowY + 2, viewYear); y++) yearOpts.push(y);
 
   return (
     <span ref={wrapRef} className="relative inline-block">
@@ -779,7 +855,13 @@ function VNMonthInput({ value, onChange, className }) {
         >
           <div className="flex items-center justify-between mb-2">
             <button type="button" onClick={() => setViewYear(y => y - 1)} className="px-2 py-1 rounded hover:bg-gray-100 text-orange-600 font-bold">‹</button>
-            <span className="font-bold text-sm text-gray-800">{viewYear}</span>
+            <select
+              value={viewYear}
+              onChange={(e) => setViewYear(Number(e.target.value))}
+              className="border rounded px-1 py-0.5 text-sm font-bold text-gray-800 outline-none focus:border-orange-500 cursor-pointer"
+            >
+              {yearOpts.map(y => <option key={y} value={y}>{y}</option>)}
+            </select>
             <button type="button" onClick={() => setViewYear(y => y + 1)} className="px-2 py-1 rounded hover:bg-gray-100 text-orange-600 font-bold">›</button>
           </div>
           <div className="grid grid-cols-3 gap-1">
@@ -814,6 +896,7 @@ const [session, setSession] = useState(() => {
   }
 });
 const [authLoading, setAuthLoading] = useState(false);
+const [recoveryMode, setRecoveryMode] = useState(false); // mở app từ link quên mật khẩu
 
 const userRole = session?.role || "member"; // admin | member | boss
 const userFullname = session?.full_name || session?.username || "User";
@@ -839,6 +922,15 @@ const [toastMessage, setToastMessage] = useState("");
 const [toastType, setToastType] = useState("success"); // success | error
 const [confirmDialog, setConfirmDialog] = useState(null); // { title, message, onConfirm, confirmText, danger }
 const [cancelDialog, setCancelDialog] = useState(null);   // { bill, reason } — dialog hủy đơn có input lý do
+// Popup hoàn hàng / tiêu hủy. { bill, step:'choose'|'return'|'destroy', returnFee, reason }
+const [returnDialog, setReturnDialog] = useState(null);
+// sys_admin sửa lại cước hoàn (về) trên đơn returned. null = không sửa; string = đang sửa.
+const [editReturnFee, setEditReturnFee] = useState(null);
+// Nhắc nhở hằng ngày (16:00 kiểm bốc xếp, 16:40 xuất bến). { id, title, message, icon } | null
+const [dailyReminder, setDailyReminder] = useState(null);
+// Chống double-submit (tạo đơn / xuất bến / lưu nháp): ref chặn đồng thời + state để disable nút.
+const [isSubmitting, setIsSubmitting] = useState(false);
+const submittingRef = useRef(false);
 // Popup xác nhận xuất bến khi tạo đơn sau CUTOFF. { branch, billData, mode: 'create'|'convert', draftId? }
 const [departureConfirmDialog, setDepartureConfirmDialog] = useState(null);
 
@@ -898,6 +990,7 @@ const [noDeclaredValue, setNoDeclaredValue] = useState(false);  // không kê kh
 const [exportVat, setExportVat] = useState(false);              // xuất VAT
 const [orderNote, setOrderNote] = useState("");                 // ghi chú đơn
 const [showBillPreview, setShowBillPreview] = useState(false);  // hiển thị biên nhận in
+const [billPreviewSingle, setBillPreviewSingle] = useState(false); // true = chỉ in 1 bản (bill giao cho khách)
 const [showRevenueDetail, setShowRevenueDetail] = useState(false); // modal chi tiết doanh thu
 
 // --- MÀN CÔNG NỢ (add-debt-collection-screen) ---
@@ -1042,6 +1135,9 @@ useEffect(() => {
       if (event === "SIGNED_OUT") {
         localStorage.removeItem("hc_session");
         setSession(null);
+      } else if (event === "PASSWORD_RECOVERY") {
+        // Mở app từ link "quên mật khẩu" → hiện màn đặt lại mật khẩu.
+        setRecoveryMode(true);
       }
     });
     unsub = sub;
@@ -1324,6 +1420,7 @@ const fetchData = async (opts) => {
         sender_phone:client_phones!sender_phone_id(phone_number),
         receiver_phone:client_phones!receiver_phone_id(phone_number),
         branch:branches!branch_id(branch_code, address, hotline, address_note),
+        current_branch:branches!current_branch_id(branch_code),
         creator:profiles!created_by(id, username, full_name),
         deliverer:profiles!delivered_by(id, username, full_name)
       `)
@@ -1411,6 +1508,8 @@ const reserveBillCode = async () => {
 // Ảnh hưởng ĐỒNG BỘ mọi máy đang login vào cùng chi nhánh.
 // Rule: chỉ user (bất kỳ role) cùng branch với warehouseBranch mới xuất bến được.
 // opts.skipConfirm: bỏ bước askConfirm (khi đã xác nhận ở nơi khác, VD popup tạo đơn ngày mai).
+// opts.skipTripChecks: bỏ validation "chuyến có đơn" + "khớp số kiện Trong/Ngoài" — dùng khi user đã
+//   xác nhận xe ĐÃ xuất bến (đếm số kiện lúc này vô nghĩa; thủ kho vẫn sửa count sau được).
 // Trả về session mới (rolled) nếu thành công, null nếu bị chặn/lỗi.
 const performDeparture = async (branch, opts = {}) => {
   if (!branch) { showToast("Chưa xác định chi nhánh kho!", "error"); return null; }
@@ -1422,29 +1521,31 @@ const performDeparture = async (branch, opts = {}) => {
     showToast(`Chỉ nhân viên chi nhánh ${branch} mới được xuất bến kho ${branch}!`, 'error');
     return null;
   }
-  // Defense-in-depth: block xuất bến khi chuyến hiện tại chưa có bill thật.
-  const curSeq = branchSessions[branch]?.bill_seq ?? 1;
-  if (curSeq <= 1) {
-    showToast(`Chuyến hiện tại của kho ${branch} chưa có đơn hàng nào — không thể xuất bến!`, 'error');
-    return null;
-  }
-  // Defense-in-depth: block xuất bến nếu còn đơn chưa điền đủ / chưa khớp số kiện Trong-Ngoài của chuyến hiện tại.
-  const tripBusinessDate = branchSessions[branch]?.business_date;
-  const tripBills = bills.filter(b =>
-    b.branch?.branch_code === branch &&
-    b.delivery_status !== 'draft' &&
-    b.delivery_status !== 'cancelled' &&
-    b.business_date === tripBusinessDate
-  );
-  const incompleteBills = tripBills.filter(b => {
-    const inside = b.inside_count;
-    const outside = b.outside_count;
-    if (inside === null || inside === undefined || outside === null || outside === undefined) return true;
-    return (Number(inside) + Number(outside)) !== Number(b.package_count || 0);
-  });
-  if (incompleteBills.length > 0) {
-    showToast(`Còn ${incompleteBills.length} đơn chưa điền đủ hoặc chưa khớp số kiện Trong/Ngoài — vui lòng kiểm tra lại!`, 'error');
-    return null;
+  if (!opts.skipTripChecks) {
+    // Defense-in-depth: block xuất bến khi chuyến hiện tại chưa có bill thật.
+    const curSeq = branchSessions[branch]?.bill_seq ?? 1;
+    if (curSeq <= 1) {
+      showToast(`Chuyến hiện tại của kho ${branch} chưa có đơn hàng nào — không thể xuất bến!`, 'error');
+      return null;
+    }
+    // Defense-in-depth: block xuất bến nếu còn đơn chưa điền đủ / chưa khớp số kiện Trong-Ngoài của chuyến hiện tại.
+    const tripBusinessDate = branchSessions[branch]?.business_date;
+    const tripBills = bills.filter(b =>
+      b.branch?.branch_code === branch &&
+      b.delivery_status !== 'draft' &&
+      b.delivery_status !== 'cancelled' &&
+      b.business_date === tripBusinessDate
+    );
+    const incompleteBills = tripBills.filter(b => {
+      const inside = b.inside_count;
+      const outside = b.outside_count;
+      if (inside === null || inside === undefined || outside === null || outside === undefined) return true;
+      return (Number(inside) + Number(outside)) !== Number(b.package_count || 0);
+    });
+    if (incompleteBills.length > 0) {
+      showToast(`Còn ${incompleteBills.length} đơn chưa điền đủ hoặc chưa khớp số kiện Trong/Ngoài — vui lòng kiểm tra lại!`, 'error');
+      return null;
+    }
   }
   const bId = branchIdByCode[branch];
   if (!bId) { showToast("Không tìm thấy chi nhánh trong DB!", "error"); return null; }
@@ -1499,9 +1600,10 @@ const handleDeparture = async () => {
 // Xuất TOÀN BỘ đơn theo filter (branch + business_date), KHÔNG áp dụng pagination.
 const handlePrintWarehouseList = () => {
   const rows = bills.filter(b =>
-    b.branch?.branch_code === warehouseBranch &&
+    (b.current_branch?.branch_code || b.branch?.branch_code) === warehouseBranch &&
     b.delivery_status !== 'draft' &&
     b.delivery_status !== 'cancelled' &&
+    b.delivery_status !== 'destroyed' &&
     b.business_date === warehouseDate
   ).sort((a, b) => (a.bill_code || "zzzz").localeCompare(b.bill_code || "zzzz"));
   const branchLabel = warehouseBranch === "SG" ? "Sài Gòn" : "Gia Lai";
@@ -1516,43 +1618,74 @@ const handlePrintWarehouseList = () => {
     if (b.payment_status === "quote_later") return "Chưa có cước";
     return formatVND(b.shipping_fee);
   };
-  const starCell = (b) => (b.special_stars === 2 ? "⭐⭐" : b.special_stars === 1 ? "⭐" : "");
-  // Excel HTML importer strips <style> border → dùng inline style + border="1" attribute
-  const cellStyle = 'border:1px solid #000;padding:4px 6px;vertical-align:top';
-  const hdrStyle = 'border:1px solid #000;padding:4px 6px;background:#e5e7eb;font-weight:700;text-align:left';
+  // Excel/Word HTML importer strips <style> border → dùng inline style + border="1" attribute
+  const cellStyle = 'border:1px solid #000;padding:4px 6px;vertical-align:top;word-break:break-word';
+  const hdrStyle = 'border:1px solid #000;padding:4px 6px;background:#e5e7eb;font-weight:700;text-align:center';
   const tbody = rows.map((b, i) => `
     <tr>
       <td class="center" style="${cellStyle};text-align:center">${i + 1}</td>
       <td class="mono bold" style="${cellStyle};font-family:Consolas,monospace;font-weight:700">${esc(b.bill_code || "(Nháp)")}</td>
-      <td class="center" style="${cellStyle};text-align:center">${starCell(b)}</td>
       <td style="${cellStyle}">${esc(b.sender_name_text || "—")}</td>
       <td style="${cellStyle}">${esc(b.receiver_name_text || "—")}</td>
       <td style="${cellStyle}">${esc(b.goods_type || "")}</td>
       <td class="center" style="${cellStyle};text-align:center">${b.package_count ?? 0}</td>
-      <td class="right" style="${cellStyle};text-align:right">${esc(feeCell(b))}</td>
+      <td class="right" style="${cellStyle};text-align:right;white-space:nowrap">${esc(feeCell(b))}</td>
       <td class="center" style="${cellStyle};text-align:center">${b.inside_count ?? ""}</td>
       <td class="center" style="${cellStyle};text-align:center">${b.outside_count ?? ""}</td>
       <td style="${cellStyle}">${esc(b.combined_goods || "")}</td>
     </tr>`).join("");
   const emptyRow = rows.length === 0
-    ? `<tr><td colspan="11" class="center italic" style="${cellStyle};padding:24px;text-align:center;color:#888">Không có đơn hàng nào</td></tr>`
+    ? `<tr><td colspan="10" class="center italic" style="${cellStyle};padding:24px;text-align:center;color:#888">Không có đơn hàng nào</td></tr>`
     : "";
   const fileBase = `danh-sach-boc-xep-${warehouseBranch}-${warehouseDate}`;
   const title = `Danh sách bốc xếp ${branchLabel} - ${warehouseDate}`;
+  // colgroup: tối ưu diện tích — Người gửi/nhận rộng, Trong/Ngoài/Giá/Hàng ghép hẹp.
+  const colgroup = `<colgroup>
+    <col style="width:5%"><col style="width:10%"><col style="width:17%"><col style="width:17%"><col style="width:14%"><col style="width:6%"><col style="width:12%"><col style="width:6%"><col style="width:6%"><col style="width:7%">
+  </colgroup>`;
+  const titleRows = `
+        <tr><td colspan="10" style="border:none;text-align:center;font-size:15px;font-weight:700;padding:6px 0 2px">DANH SÁCH BỐC XẾP HÀNG HÓA — ${esc(branchLabel.toUpperCase())}</td></tr>
+        <tr><td colspan="10" style="border:none;text-align:center;font-size:11px;color:#555;padding:0 0 8px">Ngày: <b>${esc(warehouseDate)}</b> &nbsp;•&nbsp; Tổng số đơn: <b>${rows.length}</b></td></tr>`;
+  const headerRow = `
+        <tr>
+          <th style="${hdrStyle};text-align:center">STT</th>
+          <th style="${hdrStyle}">Mã Đơn Hàng</th>
+          <th style="${hdrStyle}">Người Gửi</th>
+          <th style="${hdrStyle}">Người Nhận</th>
+          <th style="${hdrStyle}">Mặt hàng</th>
+          <th style="${hdrStyle}">Số kiện</th>
+          <th style="${hdrStyle}">Giá cước</th>
+          <th style="${hdrStyle}">Trong</th>
+          <th style="${hdrStyle}">Ngoài</th>
+          <th style="${hdrStyle}">Hàng Ghép</th>
+        </tr>`;
+  const tableHtml = `<table id="report" border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;width:100%;table-layout:fixed;border:1px solid #000">
+      ${colgroup}
+      <thead>${titleRows}${headerRow}</thead>
+      <tbody>${tbody}${emptyRow}</tbody>
+    </table>`;
+  // Style riêng cho Word (.doc): section + footer số trang.
+  const wordStyle = `
+@page Section1 { size:595.3pt 841.9pt; margin:10mm 10mm 16mm 10mm; mso-footer:f1; mso-footer-margin:8mm; }
+div.Section1 { page:Section1; }
+body{font-family:'Segoe UI',Arial,sans-serif;color:#000;font-size:10pt}
+table{border-collapse:collapse;width:100%;table-layout:fixed}
+td,th{border:1px solid #000;padding:3pt 5pt;vertical-align:top;word-break:break-word}
+thead{display:table-header-group}
+p.MsoFooter{margin:0}`;
+  // Footer Word: IF NUMPAGES>1 → "PAGE/NUMPAGES", else rỗng (ẩn khi chỉ 1 trang).
+  const wordFooter = `<div style='mso-element:footer' id='f1'><p class='MsoFooter' style='text-align:right;font-size:9pt;color:#555'><!--[if supportFields]><span style='mso-element:field-begin'></span> IF <span style='mso-element:field-begin'></span> NUMPAGES <span style='mso-element:field-separator'></span>1<span style='mso-element:field-end'></span> &gt; 1 "<span style='mso-element:field-begin'></span> PAGE <span style='mso-element:field-separator'></span>1<span style='mso-element:field-end'></span>/<span style='mso-element:field-begin'></span> NUMPAGES <span style='mso-element:field-separator'></span>1<span style='mso-element:field-end'></span>" "" <span style='mso-element:field-separator'></span><span style='mso-element:field-end'></span><![endif]--></p></div>`;
   const html = `<!DOCTYPE html><html lang="vi"><head><meta charset="utf-8"><title>${esc(title)}</title>
 <style>
-  @page { size: A4 portrait; margin: 10mm; }
+  @page { size: A4 portrait; margin: 0; }
   html,body{margin:0;padding:0}
   body{font-family:'Segoe UI',Arial,sans-serif;color:#222;background:#f3f4f6;padding:16px 0}
   .sheet{background:#fff;width:190mm;min-height:277mm;margin:0 auto;padding:10mm;box-shadow:0 2px 8px rgba(0,0,0,.1);box-sizing:border-box}
-  h1{font-size:14px;margin:0 0 4px;text-align:center}
-  .meta{color:#555;font-size:11px;margin-bottom:10px;text-align:center}
   .toolbar{max-width:190mm;margin:0 auto 12px;display:flex;gap:8px;padding:0 10mm;box-sizing:border-box}
   .toolbar button{padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;border:1px solid #d97706;background:#f97316;color:#fff;border-radius:6px}
   .toolbar button.secondary{background:#fff;color:#d97706}
-  table{border-collapse:collapse;width:100%;font-size:10px;table-layout:auto}
+  table{border-collapse:collapse;width:100%;font-size:10px;table-layout:fixed}
   th,td{border:1px solid #000;padding:4px 6px;vertical-align:top}
-  thead{background:#e5e7eb}
   th{text-align:left;font-weight:700}
   .center{text-align:center}
   .right{text-align:right}
@@ -1563,46 +1696,41 @@ const handlePrintWarehouseList = () => {
   @media print{
     body{background:#fff;padding:0}
     .toolbar{display:none}
-    .sheet{width:auto;min-height:0;margin:0;padding:0;box-shadow:none}
+    .sheet{width:auto;min-height:0;margin:0;padding:8mm 10mm;box-shadow:none}
   }
 </style></head><body>
   <div class="toolbar">
     <button onclick="window.print()">🖨️ In</button>
+    <button class="secondary" onclick="downloadWord()">📄 Tải Word (.doc)</button>
     <button class="secondary" onclick="downloadExcel()">📥 Tải Excel (.xls)</button>
   </div>
   <div class="sheet">
-    <h1>DANH SÁCH BỐC XẾP HÀNG HÓA — ${esc(branchLabel.toUpperCase())}</h1>
-    <div class="meta">Ngày: <b>${esc(warehouseDate)}</b> &nbsp;•&nbsp; Tổng số đơn: <b>${rows.length}</b></div>
-    <table id="report" border="1" cellspacing="0" cellpadding="4" style="border-collapse:collapse;width:100%;border:1px solid #000">
-      <thead>
-        <tr>
-          <th style="${hdrStyle};text-align:center;width:32px">STT</th>
-          <th style="${hdrStyle}">Mã Đơn Hàng</th>
-          <th style="${hdrStyle};text-align:center;width:60px">Bảo Quản</th>
-          <th style="${hdrStyle}">Người Gửi</th>
-          <th style="${hdrStyle}">Người Nhận</th>
-          <th style="${hdrStyle}">Mặt hàng</th>
-          <th style="${hdrStyle};text-align:center;width:50px">Số kiện</th>
-          <th style="${hdrStyle};text-align:right;width:80px">Giá cước</th>
-          <th style="${hdrStyle};text-align:center;width:50px">Trong</th>
-          <th style="${hdrStyle};text-align:center;width:50px">Ngoài</th>
-          <th style="${hdrStyle};width:90px">Hàng Ghép</th>
-        </tr>
-      </thead>
-      <tbody>${tbody}${emptyRow}</tbody>
-    </table>
+    ${tableHtml}
   </div>
 <script>
+var FILE_BASE = ${JSON.stringify(fileBase)};
+var WORD_STYLE = ${JSON.stringify(wordStyle)};
+var WORD_FOOTER = ${JSON.stringify(wordFooter)};
+function downloadBlob(content, mime, ext){
+  var blob = new Blob(['\\uFEFF' + content], { type: mime });
+  var url = URL.createObjectURL(blob);
+  var a = document.createElement('a');
+  a.href = url; a.download = FILE_BASE + ext;
+  document.body.appendChild(a); a.click();
+  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
+}
 function downloadExcel(){
   var tableHtml = document.getElementById('report').outerHTML;
   var xls = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">' +
     '<head><meta charset="utf-8"><!--[if gte mso 9]><xml><x:ExcelWorkbook><x:ExcelWorksheets><x:ExcelWorksheet><x:Name>BocXep</x:Name><x:WorksheetOptions><x:DisplayGridlines/></x:WorksheetOptions></x:ExcelWorksheet></x:ExcelWorksheets></x:ExcelWorkbook></xml><![endif]--></head><body>' + tableHtml + '</body></html>';
-  var blob = new Blob(['\\uFEFF' + xls], { type: 'application/vnd.ms-excel' });
-  var url = URL.createObjectURL(blob);
-  var a = document.createElement('a');
-  a.href = url; a.download = ${JSON.stringify(fileBase)} + '.xls';
-  document.body.appendChild(a); a.click();
-  setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 500);
+  downloadBlob(xls, 'application/vnd.ms-excel', '.xls');
+}
+function downloadWord(){
+  var tableHtml = document.getElementById('report').outerHTML;
+  var doc = "<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>" +
+    "<head><meta charset='utf-8'><style>" + WORD_STYLE + "</style></head>" +
+    "<body><div class='Section1'>" + tableHtml + "</div>" + WORD_FOOTER + "</body></html>";
+  downloadBlob(doc, 'application/msword', '.doc');
 }
 </script>
 </body></html>`;
@@ -2023,6 +2151,15 @@ const computeEditDiff = (snapshot, current) => {
 };
 
 // 2. Tạo đơn hàng mới (Tab 7.1) - submit đi thẳng, khách chưa có trong DB sẽ được tự động tạo
+// Chạy 1 hành động ghi dữ liệu kiểu "độc quyền" — chặn double-submit (ref sync + state disable nút).
+const runExclusive = async (fn) => {
+  if (submittingRef.current) return;
+  submittingRef.current = true;
+  setIsSubmitting(true);
+  try { return await fn(); }
+  finally { submittingRef.current = false; setIsSubmitting(false); }
+};
+
 const handleStartCreateBill = async (e) => {
   e.preventDefault();
 
@@ -2179,13 +2316,14 @@ const handleDepartureConfirmProceed = async () => {
 };
 
 // Popup xuất bến — user chọn "Tạo đơn cho ngày mai" + xác nhận xe ĐÃ xuất bến:
-// "Rồi" ≡ bấm nút Xuất Bến (cùng validation + advance session + audit + cập nhật mã), rồi tạo đơn cho chuyến mai.
+// "Rồi" ≡ Xuất Bến (advance session + audit + cập nhật mã), BỎ QUA check số kiện Trong/Ngoài
+// (xe đã đi, đếm lại vô nghĩa; thủ kho vẫn sửa count sau được), rồi tạo đơn cho chuyến mai.
 const handleDepartureCreateTomorrow = async () => {
   const dlg = departureConfirmDialog;
   if (!dlg) return;
-  const rolled = await performDeparture(dlg.branch, { skipConfirm: true });
+  const rolled = await performDeparture(dlg.branch, { skipConfirm: true, skipTripChecks: true });
   if (!rolled) {
-    // Bị chặn (chuyến rỗng / chưa khớp số kiện Trong-Ngoài) → quay lại bước chọn để user xử lý.
+    // Lỗi khác (quyền / DB) → quay lại bước chọn.
     setDepartureConfirmDialog({ ...dlg, stage: "choice" });
     return;
   }
@@ -2399,6 +2537,8 @@ const executeUpdateDraft = async (draftId, data) => {
       no_declared_value: data.noDeclaredValue || false,
       export_vat: data.exportVat || false,
       order_note: data.orderNote || null,
+      // Ngày giao dự kiến (text dd/mm/yyyy).
+      expected_delivery_date: data.expectedDeliveryDate || null,
       // add-server-session §5.4: cập nhật business_date theo session hiện tại — CHỈ áp dụng cho draft
       // (draft chưa có business_date cố định). Bill CHÍNH THỨC (đã có bill_code) phải giữ nguyên
       // business_date gốc — nếu không, sửa đơn/cập nhật cước sẽ vô tình đẩy "Ngày gửi" sang hôm nay,
@@ -2581,6 +2721,8 @@ const executeConvertDraftToBill = async (draftId, data, opts) => {
       created_by: session?.id || null,
       // Snapshot tên nhân viên tạo đơn — không đổi khi admin sửa full_name sau này.
       creator_name_snapshot: session?.full_name || session?.username || null,
+      // Ngày giao dự kiến (text dd/mm/yyyy).
+      expected_delivery_date: data.expectedDeliveryDate || null,
       // add-server-session §5.3 + I-4: business_date từ session (ngày kinh doanh, có thể là mai nếu đã xuất bến).
       business_date: convertSess.business_date,
       // Convert draft → pending: cập nhật created_at = now() để bill mới submit hiện đúng thứ tự
@@ -2754,6 +2896,8 @@ const executeCreateBill = async (data, opts) => {
       created_by: session?.id || null,
       // Snapshot tên nhân viên tạo đơn — không đổi khi admin sửa full_name sau này.
       creator_name_snapshot: session?.full_name || session?.username || null,
+      // Ngày giao dự kiến (text dd/mm/yyyy, nhân viên có thể override).
+      expected_delivery_date: data.expectedDeliveryDate || null,
       // add-server-session §5.2 + I-4 fix: business_date lấy từ session (không phải NOW()).
       // Nếu đã xuất bến → business_date = mai; draft cũng phải theo session.
       business_date: createSess.business_date,
@@ -3310,9 +3454,15 @@ const handleUpdateLocationCounts = async (billId, field, value) => {
     showToast('Boss chỉ được xem, không được cập nhật.', 'error');
     return;
   }
-  // Branch check: kể cả admin cũng phải đúng branch mới update được kho
-  if (bill.branch?.branch_code !== session?.branch_code) {
-    showToast(`Chỉ nhân viên chi nhánh ${bill.branch?.branch_code} mới được cập nhật kho này!`, 'error');
+  // Branch check: chi nhánh đang giữ hàng (current_branch cho đơn hoàn hàng, else gốc) mới update kho được.
+  const effBranchCode = bill.current_branch?.branch_code || bill.branch?.branch_code;
+  if (effBranchCode !== session?.branch_code) {
+    showToast(`Chỉ nhân viên chi nhánh ${effBranchCode} mới được cập nhật kho này!`, 'error');
+    return;
+  }
+  // Rule: qua ngày lịch thì khóa danh sách bốc xếp của ngày cũ. sys_admin bypass.
+  if (userRole !== 'sys_admin' && (bill.business_date || '') < getVNTodayDate()) {
+    showToast('Đã qua ngày — không sửa được danh sách bốc xếp của ngày cũ!', 'error');
     return;
   }
 
@@ -3345,8 +3495,14 @@ const handleCombinedGoodsSave = async (billId, value) => {
   const bill = bills.find(b => b.id === billId);
   if (!bill) return;
   if (session?.role === 'boss') return;
-  if (bill.branch?.branch_code !== session?.branch_code) {
-    showToast(`Chỉ nhân viên chi nhánh ${bill.branch?.branch_code} mới được cập nhật kho này!`, 'error');
+  const effBranchCode = bill.current_branch?.branch_code || bill.branch?.branch_code;
+  if (effBranchCode !== session?.branch_code) {
+    showToast(`Chỉ nhân viên chi nhánh ${effBranchCode} mới được cập nhật kho này!`, 'error');
+    return;
+  }
+  // Rule: qua ngày lịch thì khóa danh sách bốc xếp của ngày cũ. sys_admin bypass.
+  if (userRole !== 'sys_admin' && (bill.business_date || '') < getVNTodayDate()) {
+    showToast('Đã qua ngày — không sửa được danh sách bốc xếp của ngày cũ!', 'error');
     return;
   }
   const clean = (value || "").trim() || null;
@@ -3360,6 +3516,249 @@ const handleCombinedGoodsSave = async (billId, value) => {
     setBills(prev => prev.map(b => b.id === billId ? { ...b, combined_goods: clean } : b));
   } catch (err) {
     showToast("Lỗi lưu hàng ghép: " + err.message, "error");
+  }
+};
+
+// ===== add-return-and-destroy-flow: Hoàn hàng (returned) & Tiêu hủy (destroyed) =====
+// Re-fetch 1 bill với đầy đủ join (dùng cho detail view sau mỗi mutation hoàn hàng).
+const fetchBillById = async (id) => {
+  const { data } = await supabase
+    .from("bills")
+    .select(`
+      *,
+      sender:clients!sender_id(fullname),
+      receiver:clients!receiver_id(fullname),
+      sender_phone:client_phones!sender_phone_id(phone_number),
+      receiver_phone:client_phones!receiver_phone_id(phone_number),
+      branch:branches!branch_id(branch_code, address, hotline, address_note),
+      current_branch:branches!current_branch_id(branch_code),
+      creator:profiles!created_by(id, username, full_name),
+      deliverer:profiles!delivered_by(id, username, full_name)
+    `)
+    .eq("id", id)
+    .single();
+  return data || null;
+};
+
+// Quay đầu: chở hàng về người gửi, thu cước (đi + về). business_date → hôm nay;
+// current_branch_id = chi nhánh đang giữ (để vào Bốc Xếp chuyến về); giữ mã đơn.
+const handleReturnBill = async () => {
+  const dlg = returnDialog;
+  if (!dlg?.bill) return;
+  const bill = dlg.bill;
+  const reason = (dlg.reason || "").trim();
+  if (!reason) { showToast("Vui lòng nhập lý do hoàn hàng!", "error"); return; }
+  if (!(await requireSysAdminUnlock())) return;
+  const returnFee = Number(dlg.returnFee) || 0;
+  const todayVN = getVNTodayDate();
+  const existingNote = (bill.order_note || "").trim();
+  const newNote = existingNote
+    ? `[HOÀN HÀNG]: ${reason}\n\n[Ghi chú gốc]: ${existingNote}`
+    : `[HOÀN HÀNG]: ${reason}`;
+  try {
+    const { error } = await supabase.from("bills").update({
+      delivery_status: "returned",
+      return_fee: returnFee,
+      current_branch_id: session?.branch_id || bill.branch_id,
+      business_date: todayVN,
+      return_confirmed_at: null,
+      order_note: newNote,
+    }).eq("id", bill.id);
+    if (error) throw error;
+    logAudit({
+      entityType: "bill", entityId: bill.id, entityLabel: bill.bill_code,
+      action: "bill_returned",
+      changes: {
+        delivery_status: [bill.delivery_status, "returned"],
+        return_fee: [bill.return_fee ?? 0, returnFee],
+        business_date: [bill.business_date, todayVN],
+      },
+      note: reason,
+    });
+    showToast(`Đã hoàn hàng đơn ${bill.bill_code}!`, "success");
+    setReturnDialog(null);
+    await fetchData();
+    const fresh = await fetchBillById(bill.id);
+    if (fresh) setSelectedBill(fresh);
+    setBillHistoryRefreshKey(k => k + 1);
+  } catch (err) {
+    showToast("Lỗi hoàn hàng: " + err.message, "error");
+  }
+};
+
+// Tiêu hủy: chỉ khi đơn KHÔNG còn nợ (paid/free). Hàng bỏ tại chi nhánh nhận, không chuyến về.
+const handleDestroyBill = async () => {
+  const dlg = returnDialog;
+  if (!dlg?.bill) return;
+  const bill = dlg.bill;
+  const reason = (dlg.reason || "").trim();
+  if (!reason) { showToast("Vui lòng nhập lý do tiêu hủy!", "error"); return; }
+  if (bill.payment_status !== "paid" && bill.payment_status !== "free") {
+    showToast("Đơn còn nợ cước — phải Quay đầu để thu tiền, không được tiêu hủy!", "error");
+    return;
+  }
+  if (!(await requireSysAdminUnlock())) return;
+  const existingNote = (bill.order_note || "").trim();
+  const newNote = existingNote
+    ? `[TIÊU HỦY]: ${reason}\n\n[Ghi chú gốc]: ${existingNote}`
+    : `[TIÊU HỦY]: ${reason}`;
+  try {
+    const { error } = await supabase.from("bills").update({
+      delivery_status: "destroyed",
+      order_note: newNote,
+    }).eq("id", bill.id);
+    if (error) throw error;
+    logAudit({
+      entityType: "bill", entityId: bill.id, entityLabel: bill.bill_code,
+      action: "bill_destroyed",
+      changes: { delivery_status: [bill.delivery_status, "destroyed"] },
+      note: reason,
+    });
+    showToast(`Đã tiêu hủy đơn ${bill.bill_code}!`, "success");
+    setReturnDialog(null);
+    await fetchData();
+    const fresh = await fetchBillById(bill.id);
+    if (fresh) setSelectedBill(fresh);
+    setBillHistoryRefreshKey(k => k + 1);
+  } catch (err) {
+    showToast("Lỗi tiêu hủy: " + err.message, "error");
+  }
+};
+
+// GL xác nhận đã nhận lại hàng (bước 2 của quay đầu). current_branch_id → về chi nhánh gốc.
+const handleConfirmReturnArrived = async () => {
+  if (!selectedBill) return;
+  if (session?.role === "boss") { showToast("Boss chỉ được xem.", "error"); return; }
+  if (!(await requireSysAdminUnlock())) return;
+  const ok = await askConfirm({
+    title: "Xác nhận đã hoàn hàng thành công?",
+    message: `Xác nhận hàng của đơn ${selectedBill.bill_code || ""} đã hoàn về cho người gửi.`,
+    confirmText: "Xác nhận",
+  });
+  if (!ok) return;
+  try {
+    const { error } = await supabase.from("bills").update({
+      return_confirmed_at: new Date().toISOString(),
+    }).eq("id", selectedBill.id);
+    if (error) throw error;
+    logAudit({
+      entityType: "bill", entityId: selectedBill.id, entityLabel: selectedBill.bill_code,
+      action: "bill_return_confirmed",
+      changes: {},
+    });
+    showToast("Đã xác nhận hoàn hàng về thành công!", "success");
+    await fetchData();
+    const fresh = await fetchBillById(selectedBill.id);
+    if (fresh) setSelectedBill(fresh);
+    setBillHistoryRefreshKey(k => k + 1);
+  } catch (err) {
+    showToast("Lỗi xác nhận: " + err.message, "error");
+  }
+};
+
+// sys_admin sửa lại cước hoàn (về) của đơn returned (vd nhập nhầm). Chỉ đổi return_fee.
+const handleSaveReturnFee = async () => {
+  if (!selectedBill || userRole !== "sys_admin") return;
+  if (!(await requireSysAdminUnlock())) return;
+  const newFee = Number(editReturnFee) || 0;
+  const oldFee = Number(selectedBill.return_fee) || 0;
+  if (newFee === oldFee) { setEditReturnFee(null); return; }
+  try {
+    const { error } = await supabase.from("bills").update({ return_fee: newFee }).eq("id", selectedBill.id);
+    if (error) throw error;
+    logAudit({
+      entityType: "bill", entityId: selectedBill.id, entityLabel: selectedBill.bill_code,
+      action: "bill_update",
+      changes: { return_fee: [oldFee, newFee] },
+      note: "sys_admin sửa cước hoàn",
+    });
+    showToast("Đã cập nhật cước hoàn!", "success");
+    setEditReturnFee(null);
+    await fetchData();
+    const fresh = await fetchBillById(selectedBill.id);
+    if (fresh) setSelectedBill(fresh);
+    setBillHistoryRefreshKey(k => k + 1);
+  } catch (err) {
+    showToast("Lỗi cập nhật cước hoàn: " + err.message, "error");
+  }
+};
+
+// Nhắc nhở hằng ngày: chỉ hiện cho user đã mở app TRƯỚC mốc giờ (không hiện khi login trễ /
+// qua ngày / sau 18:00). Mỗi mốc 1 lần/phiên. Trừ boss & sys_admin.
+const reminderMountRef = useRef(null);
+const reminderShownRef = useRef({});
+useEffect(() => {
+  if (!session || userRole === "boss" || userRole === "sys_admin") return;
+  const toMin = (hhmm) => { const [h, m] = hhmm.split(":").map(Number); return h * 60 + m; };
+  reminderMountRef.current = toMin(getVNNowHHMM()); // giờ mở app (phút trong ngày)
+  reminderShownRef.current = {};
+  const CLOSE_AT = toMin("18:00");
+  const check = () => {
+    const nowM = toMin(getVNNowHHMM());
+    if (nowM >= CLOSE_AT) return;
+    setDailyReminder(curr => {
+      if (curr) return curr; // đang hiện 1 cái → chờ user đóng
+      for (const r of DAILY_REMINDERS) {
+        const tM = toMin(r.time);
+        if (reminderMountRef.current < tM && nowM >= tM && !reminderShownRef.current[r.id]) {
+          reminderShownRef.current[r.id] = true;
+          return r;
+        }
+      }
+      return null;
+    });
+  };
+  check();
+  const iv = setInterval(check, 30000);
+  return () => clearInterval(iv);
+}, [session, userRole]);
+
+const dismissDailyReminder = () => setDailyReminder(null);
+
+// Thu tiền đơn hoàn: (shipping_fee + return_fee) − đã trả → payment (branch = chi nhánh thu, now).
+const handleCollectReturnPayment = async () => {
+  if (!selectedBill) return;
+  if (session?.role === "boss") { showToast("Boss chỉ được xem.", "error"); return; }
+  if (!(await requireSysAdminUnlock())) return;
+  const { data: liveBill, error: liveErr } = await supabase
+    .from("bills")
+    .select("id, shipping_fee, return_fee, actual_amount_paid, payment_status, branch_id, bill_code")
+    .eq("id", selectedBill.id)
+    .single();
+  if (liveErr || !liveBill) { showToast("Không tải được đơn — thử lại!", "error"); return; }
+  const owed = (Number(liveBill.shipping_fee) || 0) + (Number(liveBill.return_fee) || 0) - (Number(liveBill.actual_amount_paid) || 0);
+  if (owed <= 0) { showToast("Đơn đã thu đủ cước!", "info"); return; }
+  const ok = await askConfirm({
+    title: "Thu tiền đơn hoàn?",
+    message: `Thu ${owed.toLocaleString("vi-VN")} đ cước còn lại cho đơn ${liveBill.bill_code || ""}?`,
+    confirmText: "Thu tiền",
+  });
+  if (!ok) return;
+  try {
+    const { error: payErr } = await supabase.from("bill_payment_details").insert({
+      bill_id: liveBill.id,
+      amount_paid: owed,
+      branch_id: session?.branch_id || liveBill.branch_id,
+      collected_by: session?.id || null,
+      note: "Thu cước đi + hoàn hàng",
+    });
+    if (payErr) throw payErr;
+    const { error: billErr } = await supabase.from("bills").update({ payment_status: "paid" }).eq("id", liveBill.id);
+    if (billErr) throw billErr;
+    await refreshBillActualPaid(liveBill.id);
+    logAudit({
+      entityType: "bill", entityId: liveBill.id, entityLabel: liveBill.bill_code,
+      action: "bill_payment_received",
+      changes: { payment_status: [liveBill.payment_status, "paid"], amount_paid: [null, owed] },
+      note: "Thu cước đơn hoàn hàng",
+    });
+    showToast(`Đã thu ${owed.toLocaleString("vi-VN")} đ đơn hoàn!`, "success");
+    await fetchData();
+    const fresh = await fetchBillById(selectedBill.id);
+    if (fresh) setSelectedBill(fresh);
+    setBillHistoryRefreshKey(k => k + 1);
+  } catch (err) {
+    showToast("Lỗi thu tiền: " + err.message, "error");
   }
 };
 
@@ -3897,11 +4296,13 @@ useEffect(() => {
 }, [currentTab, userRole, revenueTab, revenueFilterType, revenueDate, revenueMonth, revenueYear, expenseHistoryRefreshKey]);
 
 // --- Danh Sách Bốc Xếp: đơn của chi nhánh + ngày đang chọn (không tính draft/cancelled) ---
+// add-return-and-destroy-flow: dùng chi nhánh HIỆU LỰC = current_branch_id (chuyến về) nếu có, else branch gốc.
 const warehouseFilteredBills = useMemo(() => {
   return bills.filter(b =>
-    b.branch?.branch_code === warehouseBranch &&
+    (b.current_branch?.branch_code || b.branch?.branch_code) === warehouseBranch &&
     b.delivery_status !== 'draft' &&
     b.delivery_status !== 'cancelled' &&
+    b.delivery_status !== 'destroyed' &&
     b.business_date === warehouseDate
   // Sắp theo mã đơn tăng dần (seq ở 2 ký tự đầu → string sort đúng thứ tự).
   ).sort((a, b) => (a.bill_code || "zzzz").localeCompare(b.bill_code || "zzzz"));
@@ -3933,6 +4334,8 @@ const filteredBills = useMemo(() => {
     if (f.delivery === "delivered" && b.delivery_status !== "delivered") return false;
     if (f.delivery === "pending" && b.delivery_status !== "pending") return false;
     if (f.delivery === "draft" && b.delivery_status !== "draft") return false;
+    if (f.delivery === "returned" && b.delivery_status !== "returned") return false;
+    if (f.delivery === "destroyed" && b.delivery_status !== "destroyed") return false;
     if (f.delivery === "cancelled" && b.delivery_status !== "cancelled") return false;
     // tr\u1ea1ng th\u00e1i thanh to\u00e1n
     if (f.payment === "paid" && b.payment_status !== "paid") return false;
@@ -4062,6 +4465,9 @@ if (authLoading) {
     </div>
   );
 }
+if (recoveryMode) {
+  return <ResetPasswordScreen onDone={() => { setRecoveryMode(false); setSession(null); }} />;
+}
 if (!session) {
   return <LoginScreen onLogin={handleLoginSuccess} />;
 }
@@ -4079,6 +4485,24 @@ return (
       }`}>
         <span>{toastType === "success" ? "✅" : "❌"}</span>
         <span>{toastMessage}</span>
+      </div>
+    )}
+
+    {/* --- NHẮC NHỞ HẰNG NGÀY (16:00 kiểm bốc xếp / 16:40 xuất bến) — mọi màn hình, trừ boss & sys_admin --- */}
+    {dailyReminder && (
+      <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/40 p-4">
+        <div className="bg-white rounded-2xl shadow-2xl max-w-sm w-full p-6 text-center">
+          <div className="text-5xl mb-3">{dailyReminder.icon}</div>
+          <h3 className="text-lg font-extrabold text-gray-800 mb-2">{dailyReminder.title}</h3>
+          <p className="text-sm text-gray-600 mb-5 leading-relaxed">{dailyReminder.message}</p>
+          <button
+            type="button"
+            onClick={dismissDailyReminder}
+            className="w-full px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-white font-bold rounded-lg transition"
+          >
+            OK
+          </button>
+        </div>
       </div>
     )}
 
@@ -4157,14 +4581,111 @@ return (
             </button>
             <button
               type="button"
-              onClick={handleConfirmCancelBill}
-              className="px-4 py-2 text-xs font-bold text-white rounded-lg bg-red-600 hover:bg-red-700"
+              onClick={() => runExclusive(handleConfirmCancelBill)}
+              disabled={isSubmitting}
+              className="px-4 py-2 text-xs font-bold text-white rounded-lg bg-red-600 hover:bg-red-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              {isDraft ? "Xóa nháp" : "Xác nhận hủy đơn"}
+              {isSubmitting ? "⏳ Đang xử lý..." : (isDraft ? "Xóa nháp" : "Xác nhận hủy đơn")}
             </button>
           </div>
         </div>
       </div>
+      );
+    })()}
+
+    {/* --- MODAL HOÀN HÀNG / TIÊU HỦY (add-return-and-destroy-flow) --- */}
+    {returnDialog && (() => {
+      const dlg = returnDialog;
+      const bill = dlg.bill;
+      const hasDebt = bill?.payment_status !== "paid" && bill?.payment_status !== "free";
+      return (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-[fadeIn_0.15s_ease-out]">
+            <div className="px-5 py-4 border-b bg-red-50 flex items-center justify-between">
+              <h3 className="font-bold text-sm text-red-800">
+                ↩️ Hoàn hàng — Đơn {bill?.bill_code || ""}
+              </h3>
+              <button type="button" onClick={() => setReturnDialog(null)} className="text-gray-400 hover:text-gray-700 text-xl leading-none">×</button>
+            </div>
+
+            {dlg.step === "choose" && (
+              <div className="p-5 space-y-3">
+                <p className="text-sm text-gray-600">Khách nhận từ chối. Chọn xử lý cho đơn này:</p>
+                <button
+                  type="button"
+                  onClick={() => setReturnDialog({ ...dlg, step: "return" })}
+                  className="w-full text-left px-4 py-3 border rounded-lg hover:bg-orange-50 border-orange-200"
+                >
+                  <div className="font-bold text-orange-700">↩️ Hoàn hàng — trả về người gửi</div>
+                  <div className="text-xs text-gray-500">Thu cước đi + cước hoàn (chiều về).</div>
+                </button>
+                <button
+                  type="button"
+                  disabled={hasDebt}
+                  onClick={() => setReturnDialog({ ...dlg, step: "destroy" })}
+                  className={`w-full text-left px-4 py-3 border rounded-lg ${hasDebt ? "opacity-50 cursor-not-allowed border-gray-200" : "hover:bg-red-50 border-red-200"}`}
+                  title={hasDebt ? "Đơn còn nợ cước — phải Quay đầu để thu tiền" : ""}
+                >
+                  <div className="font-bold text-red-700">🗑️ Tiêu hủy</div>
+                  <div className="text-xs text-gray-500">{hasDebt ? "Khách đã xác nhận ko nhận lại hàng": "Hàng sẽ bị tiêu hủy."}</div>
+                </button>
+              </div>
+            )}
+
+            {dlg.step === "return" && (
+              <div className="p-5 space-y-3">
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Cước hoàn hàng — chiều về (VND)</label>
+                  <MoneyInput
+                    value={dlg.returnFee}
+                    onChange={(v) => setReturnDialog(d => ({ ...d, returnFee: v }))}
+                    placeholder="0 nếu miễn phí cước về..."
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                  <p className="text-[11px] text-gray-500 mt-1">
+                    Tổng cước đơn = cước đi ({formatVND(bill?.shipping_fee)}) + cước hoàn.
+                  </p>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Lý do hoàn hàng *</label>
+                  <textarea
+                    value={dlg.reason}
+                    onChange={(e) => setReturnDialog(d => ({ ...d, reason: e.target.value }))}
+                    rows={2}
+                    placeholder="VD: khách SG từ chối nhận, sai địa chỉ..."
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t">
+                  <button type="button" onClick={() => setReturnDialog({ ...dlg, step: "choose" })} className="px-4 py-2 text-sm font-semibold text-gray-700 bg-white border rounded hover:bg-gray-50">← Quay lại</button>
+                  <button type="button" onClick={() => runExclusive(handleReturnBill)} disabled={isSubmitting} className="px-4 py-2 text-sm font-semibold text-white bg-orange-600 hover:bg-orange-700 rounded disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? "⏳ Đang xử lý..." : "↩️ Xác nhận hoàn hàng"}</button>
+                </div>
+              </div>
+            )}
+
+            {dlg.step === "destroy" && (
+              <div className="p-5 space-y-3">
+                <div className="bg-red-50 border border-red-200 rounded p-2 text-[11px] text-red-800">
+                  ⚠️ Tiêu hủy: hàng bị bỏ, không chở về. Đơn đã thanh toán nên không thu thêm.
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-600 mb-1">Lý do tiêu hủy *</label>
+                  <textarea
+                    value={dlg.reason}
+                    onChange={(e) => setReturnDialog(d => ({ ...d, reason: e.target.value }))}
+                    rows={2}
+                    placeholder="VD: khách gửi không nhận lại, hàng hư hỏng..."
+                    className="w-full border rounded px-3 py-2 text-sm"
+                  />
+                </div>
+                <div className="flex justify-end gap-2 pt-2 border-t">
+                  <button type="button" onClick={() => setReturnDialog({ ...dlg, step: "choose" })} className="px-4 py-2 text-sm font-semibold text-gray-700 bg-white border rounded hover:bg-gray-50">← Quay lại</button>
+                  <button type="button" onClick={() => runExclusive(handleDestroyBill)} disabled={isSubmitting} className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded disabled:opacity-60 disabled:cursor-not-allowed">{isSubmitting ? "⏳ Đang xử lý..." : "🗑️ Xác nhận tiêu hủy"}</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
       );
     })()}
 
@@ -4183,7 +4704,7 @@ return (
                   </h3>
                 </div>
                 <div className="px-5 py-3 text-sm text-gray-600">
-                  Nếu xe đã xuất bến, hệ thống sẽ chốt chuyến hôm nay và tạo đơn này cho <b>chuyến ngày mai</b>.
+                  Xác nhận xe đã <b>xuất bến</b> chưa?
                 </div>
                 <div className="px-5 py-3 bg-gray-50 border-t flex flex-col sm:flex-row justify-end gap-2">
                   <button
@@ -4195,10 +4716,11 @@ return (
                   </button>
                   <button
                     type="button"
-                    onClick={handleDepartureCreateTomorrow}
-                    className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg"
+                    onClick={() => runExclusive(handleDepartureCreateTomorrow)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 text-xs font-bold text-white bg-amber-600 hover:bg-amber-700 rounded-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    ✅ Rồi, tạo đơn ngày mai
+                    {isSubmitting ? "⏳ Đang xử lý..." : "✅ Rồi, tạo đơn ngày mai"}
                   </button>
                 </div>
               </>
@@ -4206,19 +4728,20 @@ return (
               <>
                 <div className="px-5 py-4 border-b bg-amber-50">
                   <h3 className="font-bold text-sm text-amber-800">
-                    🚛 Đã sau {timeLabel} — Tạo đơn cho chuyến nào?
+                    🚛 Đã sau {timeLabel} — Xe xuất bến chưa?
                   </h3>
                 </div>
                 <div className="px-5 py-3 text-sm text-gray-600">
-                  Xe kho {dlg.branch} có thể đã xuất bến. Chọn chuyến áp dụng cho đơn này.
+                  Chọn ngày tạo cho đơn này.
                 </div>
                 <div className="px-5 py-3 bg-gray-50 border-t flex flex-col sm:flex-row justify-end gap-2">
                   <button
                     type="button"
-                    onClick={handleDepartureConfirmProceed}
-                    className="px-4 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg"
+                    onClick={() => runExclusive(handleDepartureConfirmProceed)}
+                    disabled={isSubmitting}
+                    className="px-4 py-2 text-xs font-bold text-gray-700 bg-white border border-gray-300 hover:bg-gray-100 rounded-lg disabled:opacity-60 disabled:cursor-not-allowed"
                   >
-                    📦 Tạo đơn hôm nay
+                    {isSubmitting ? "⏳ Đang xử lý..." : "📦 Tạo đơn hôm nay"}
                   </button>
                   <button
                     type="button"
@@ -4269,10 +4792,11 @@ return (
             </button>
             <button
               type="button"
-              onClick={handleConfirmEditBill}
-              className="px-4 py-2 text-xs font-bold text-white rounded-lg bg-amber-600 hover:bg-amber-700"
+              onClick={() => runExclusive(handleConfirmEditBill)}
+              disabled={isSubmitting}
+              className="px-4 py-2 text-xs font-bold text-white rounded-lg bg-amber-600 hover:bg-amber-700 disabled:opacity-60 disabled:cursor-not-allowed"
             >
-              OK — Cập nhật
+              {isSubmitting ? "⏳ Đang lưu..." : "OK — Cập nhật"}
             </button>
           </div>
         </div>
@@ -4444,11 +4968,11 @@ return (
           {/* Ký giao / ký nhận — hiện ở cả 2 bản (khách giữ + chành xe giữ) */}
           <div className="border-t-2 border-gray-800 pt-3 mt-4 text-xs">
             <div className="grid grid-cols-2 gap-3 text-center">
-              <div>
+              <div className="pb-14">
                 <p className="font-bold">Ký giao</p>
                 <p className="text-[11px] text-gray-600">(Ghi rõ họ tên)</p>
               </div>
-              <div>
+              <div className="pb-14">
                 <p className="font-bold">Ký nhận</p>
                 <p className="text-[11px] text-gray-600">(Ghi rõ họ tên)</p>
               </div>
@@ -4464,10 +4988,10 @@ return (
         <div className="bg-white rounded-lg shadow-2xl w-full max-w-md my-8 max-h-[90vh] overflow-y-auto">
           {/* Header */}
           <div className="px-6 py-4 border-b flex items-center justify-between bg-gray-50">
-            <h3 className="font-bold text-lg text-gray-800">📋 Biên Nhận In (2 bản: khách giữ + chành xe giữ)</h3>
+            <h3 className="font-bold text-lg text-gray-800">{billPreviewSingle ? "📄 Bill Giao (1 bản cho khách)" : "📋 Biên Nhận In (2 bản: khách giữ + chành xe giữ)"}</h3>
             <button
               type="button"
-              onClick={() => setShowBillPreview(false)}
+              onClick={() => { setShowBillPreview(false); setBillPreviewSingle(false); }}
               className="text-gray-400 hover:text-gray-600 text-2xl leading-none"
             >
               ×
@@ -4502,16 +5026,19 @@ return (
 
             {renderBillCopy()}
 
-            <div className="border-t-4 border-dashed border-gray-300 my-6" />
-
-            {renderBillCopy()}
+            {!billPreviewSingle && (
+              <>
+                <div className="border-t-4 border-dashed border-gray-300 my-6" />
+                {renderBillCopy()}
+              </>
+            )}
           </div>
 
           {/* Footer Buttons */}
           <div className="px-6 py-4 border-t bg-gray-50 flex justify-end gap-3">
             <button
               type="button"
-              onClick={() => setShowBillPreview(false)}
+              onClick={() => { setShowBillPreview(false); setBillPreviewSingle(false); }}
               className="px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-md transition"
             >
               Đóng
@@ -4689,7 +5216,7 @@ return (
               className="text-gray-500 hover:text-gray-700 text-xl leading-none"
             >×</button>
           </div>
-          <form onSubmit={handleUpdateExpense} className="p-5 space-y-4">
+          <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleUpdateExpense(e)); }} className="p-5 space-y-4">
             <div className="text-xs text-gray-500 bg-gray-50 p-2 rounded">
               Chi nhánh: <b>{editingExpense.branch?.branch_code || "—"}</b> · Tạo lúc: <b>{toVNDate(editingExpense.created_at) || "—"}</b>
             </div>
@@ -4734,8 +5261,9 @@ return (
               >Hủy</button>
               <button
                 type="submit"
-                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded"
-              >Lưu thay đổi</button>
+                disabled={isSubmitting}
+                className="px-4 py-2 text-sm font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded disabled:opacity-60 disabled:cursor-not-allowed"
+              >{isSubmitting ? "⏳ Đang lưu..." : "Lưu thay đổi"}</button>
             </div>
           </form>
         </div>
@@ -4769,8 +5297,9 @@ return (
               >Chưa — để sau</button>
               <button
                 type="button"
-                onClick={() => handleCloseMonth(monthClosePrompt.branchCode, monthClosePrompt.periodMonth)}
-                className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded"
+                onClick={() => runExclusive(() => handleCloseMonth(monthClosePrompt.branchCode, monthClosePrompt.periodMonth))}
+                disabled={isSubmitting}
+                className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded disabled:opacity-60 disabled:cursor-not-allowed"
               >Rồi — khóa sổ</button>
             </div>
           </div>
@@ -4805,9 +5334,10 @@ return (
             >Hủy</button>
             <button
               type="button"
-              onClick={handleDeleteExpense}
-              className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded"
-            >Xóa</button>
+              onClick={() => runExclusive(handleDeleteExpense)}
+              disabled={isSubmitting}
+              className="px-4 py-2 text-sm font-semibold text-white bg-red-600 hover:bg-red-700 rounded disabled:opacity-60 disabled:cursor-not-allowed"
+            >{isSubmitting ? "⏳..." : "Xóa"}</button>
           </div>
         </div>
       </div>
@@ -4970,7 +5500,7 @@ return (
               <h3 className="font-bold text-sm text-gray-700 border-l-4 border-orange-500 pl-2">
                 {editingClientId ? "✏️ Sửa Khách Hàng" : "Thêm Khách Hàng Mới"}
               </h3>
-              <form onSubmit={handleAddClient} className="space-y-3">
+              <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleAddClient(e)); }} className="space-y-3">
                 <div>
                   <label className="block text-xs text-gray-400 mb-1">Họ tên *</label>
                   <input
@@ -5062,10 +5592,10 @@ return (
 
                 <button
                   type="submit"
-                  disabled={userRole === "boss"}
-                  className="w-full bg-orange-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-orange-700 transition"
+                  disabled={userRole === "boss" || isSubmitting}
+                  className="w-full bg-orange-600 text-white font-bold py-2 rounded-lg text-sm hover:bg-orange-700 transition disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {editingClientId ? "💾 Cập Nhật Khách Hàng" : "💾 Lưu Khách Hàng"}
+                  {isSubmitting ? "⏳ Đang lưu..." : (editingClientId ? "💾 Cập Nhật Khách Hàng" : "💾 Lưu Khách Hàng")}
                 </button>
                 {editingClientId && (
                   <button
@@ -5300,6 +5830,12 @@ return (
                           <p className={`${ui.valueStrong} text-orange-600 mt-1`}>{formatVND(selectedBill.shipping_fee)}</p>
                         )}
                       </div>
+                      {Number(selectedBill.return_fee) > 0 && (
+                        <div>
+                          <p className={ui.label}>Cước hoàn (về)</p>
+                          <p className={`${ui.valueStrong} text-orange-600 mt-1`}>{formatVND(selectedBill.return_fee)}</p>
+                        </div>
+                      )}
                       <div>
                         <p className={ui.label}>Thanh toán</p>
                         {selectedBill.payment_status === "free" ? (
@@ -5316,10 +5852,22 @@ return (
                       </div>
                       <div>
                         <p className={ui.label}>Giao hàng</p>
-                        <p className={`mt-1 ${selectedBill.delivery_status === "cancelled" ? ui.statusCancelled : (selectedBill.delivery_status === "delivered" ? ui.statusDelivered : ui.statusPending)}`}>
-                          <span className={`w-1.5 h-1.5 rounded-full ${selectedBill.delivery_status === "cancelled" ? "bg-red-500" : (selectedBill.delivery_status === "delivered" ? "bg-emerald-500" : "bg-amber-500")}`}></span>
-                          {selectedBill.delivery_status === "cancelled" ? "Đã hủy" : (selectedBill.delivery_status === "delivered" ? "Đã giao" : "Chờ giao")}
-                        </p>
+                        {(() => {
+                          const ds = selectedBill.delivery_status;
+                          const map = {
+                            cancelled: ["Đã hủy", ui.statusCancelled, "bg-red-500"],
+                            delivered: ["Đã giao", ui.statusDelivered, "bg-emerald-500"],
+                            returned: ["Hoàn hàng", ui.statusUnpaid, "bg-orange-500"],
+                            destroyed: ["Tiêu hủy", ui.statusCancelled, "bg-red-500"],
+                          };
+                          const [label, cls, dot] = map[ds] || ["Chờ giao", ui.statusPending, "bg-amber-500"];
+                          return (
+                            <p className={`mt-1 ${cls}`}>
+                              <span className={`w-1.5 h-1.5 rounded-full ${dot}`}></span>
+                              {label}
+                            </p>
+                          );
+                        })()}
                       </div>
                       <div>
                         <p className={ui.label}>Giao tận nơi</p>
@@ -5395,12 +5943,81 @@ return (
                       ) : null;
                     })()}
 
+                    {selectedBill.delivery_status === "destroyed" && (() => {
+                      const code = selectedBill.current_branch?.branch_code || selectedBill.branch?.branch_code;
+                      const label = code === "SG" ? "Sài Gòn" : code === "GL" ? "Gia Lai" : (code || "—");
+                      return (
+                      <div className={`${ui.alertWarning} flex items-center gap-3`}>
+                        <span className="text-xl">🗑️</span>
+                        <div>
+                          <h4 className="text-sm font-bold">Đơn đã tiêu hủy</h4>
+                          <p className="text-xs">Hàng đã tiêu hủy tại chi nhánh {label}.</p>
+                        </div>
+                      </div>
+                      );
+                    })()}
+
+                    {/* Hoàn hàng: panel thu cước (đi + về), thay cho form giao nhận thường */}
+                    {selectedBill.delivery_status === "returned" && (() => {
+                      const shipFee = Number(selectedBill.shipping_fee) || 0;
+                      const retFee = Number(selectedBill.return_fee) || 0;
+                      const total = shipFee + retFee;
+                      const paid = Number(selectedBill.actual_amount_paid) || 0;
+                      const remain = Math.max(0, total - paid);
+                      const confirmed = !!selectedBill.return_confirmed_at;
+                      return (
+                        <div className={ui.card}>
+                          <div className={`${ui.alertWarning} flex items-center gap-3 mb-4`}>
+                            <span className="text-xl">↩️</span>
+                            <div>
+                              <h4 className="text-sm font-bold">Đơn đang hoàn hàng</h4>
+                              <p className="text-xs">{!confirmed ? "Chờ hàng về tới chi nhánh gốc." : remain > 0 ? "Hàng đã về — giao cho người gửi và thu cước." : "Đã hoàn tất."}</p>
+                            </div>
+                          </div>
+                          <h4 className={`${ui.sectionTitle} ${ui.cardHeader} mb-3`}>Thu cước hoàn hàng (đi + về)</h4>
+                          <div className="space-y-2 text-sm">
+                            <div className="flex justify-between"><span className={ui.label}>Cước đi</span><span className={ui.value}>{formatVND(shipFee)}</span></div>
+                            <div className="flex justify-between items-center">
+                              <span className={ui.label}>Cước hoàn (về)</span>
+                              {editReturnFee !== null ? (
+                                <span className="flex items-center gap-1">
+                                  <MoneyInput value={editReturnFee} onChange={setEditReturnFee} className="w-28 border rounded px-2 py-1 text-sm text-right" />
+                                  <button type="button" onClick={() => runExclusive(handleSaveReturnFee)} disabled={isSubmitting} className="text-xs font-bold text-emerald-700 hover:underline px-1 disabled:opacity-50">{isSubmitting ? "..." : "Lưu"}</button>
+                                  <button type="button" onClick={() => setEditReturnFee(null)} className="text-xs text-gray-500 hover:underline px-1">Hủy</button>
+                                </span>
+                              ) : (
+                                <span className="flex items-center gap-2">
+                                  <span className={ui.value}>{formatVND(retFee)}</span>
+                                  {userRole === "sys_admin" && (
+                                    <button type="button" onClick={() => setEditReturnFee("")} className="text-xs text-blue-600 hover:underline" title="sys_admin sửa cước hoàn">✏️ Sửa</button>
+                                  )}
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex justify-between border-t border-gray-200 pt-2"><span className="font-bold">Tổng cần thu</span><span className="font-bold text-orange-600">{formatVND(total)}</span></div>
+                            <div className="flex justify-between"><span className={ui.label}>Đã thu</span><span className={ui.value}>{formatVND(paid)}</span></div>
+                            <div className="flex justify-between"><span className="font-bold">Còn lại</span><span className={`font-bold ${remain > 0 ? "text-red-600" : "text-emerald-600"}`}>{formatVND(remain)}</span></div>
+                          </div>
+                          <p className="text-xs text-gray-500 mt-3">
+                            {!confirmed
+                              ? "Khi hàng về, bấm \"✅ Xác nhận đã hoàn hàng\" bên dưới."
+                              : remain > 0
+                                ? "Bấm \"💰 Thu tiền hoàn\" bên dưới để thu đủ cước còn lại."
+                                : "Đã thu đủ cước — không cần thao tác thêm."}
+                          </p>
+                        </div>
+                      );
+                    })()}
+
+                    {selectedBill.delivery_status !== "returned" && (
                     <fieldset disabled={(() => {
                       // Fully done → disable (existing behavior).
                       if (selectedBill.delivery_status === "delivered"
                           && (selectedBill.payment_status === "paid" || selectedBill.payment_status === "free")) {
                         return true;
                       }
+                      // Tiêu hủy → kết thúc, disable mọi nơi.
+                      if (selectedBill.delivery_status === "destroyed") return true;
                       // Boss = xem thôi, không thao tác thanh toán/giao nhận.
                       if (userRole === "boss") return true;
                       // Rule 3: chi nhánh GỬI (same branch với bill) không thao tác section này — chờ chi nhánh nhận. Sys_admin bypass.
@@ -5602,6 +6219,7 @@ return (
                         </div>
                       </div>
                     </fieldset>
+                    )}
 
                     {/* Action bar — tất cả buttons gộp xuống đây */}
                     <div className="flex flex-wrap justify-end gap-2 border-t border-gray-200 pt-4">
@@ -5619,10 +6237,10 @@ return (
                       </button>
                       {(() => {
                         // Rule 1 + 4: ch\u1ec9 same-branch v\u00e0 trong ng\u00e0y m\u1edbi s\u1eeda/h\u1ee7y \u0111\u01a1n; sys_admin bypass.
-                        const todayVN = getVNTodayDate();
                         const sameBranch = selectedBill.branch?.branch_code === session?.branch_code;
-                        const isToday = selectedBill.business_date === todayVN;
-                        const canModify = userRole === "sys_admin" || (sameBranch && isToday);
+                        const sess = branchSessions[selectedBill.branch?.branch_code];
+                        const tripDeparted = sess ? String(sess.business_date) > String(selectedBill.business_date) : false;
+                        const canModify = userRole === "sys_admin" || (sameBranch && !tripDeparted);
                         return canModify;
                       })()
                         && (userRole === "admin" || userRole === "sys_admin")
@@ -5749,10 +6367,10 @@ return (
                       })()}
                       {/* Hủy Đơn cho đơn quote_later — giữ nguyên rule cũ (admin/sys_admin + canModify), tách riêng vì Sửa Đơn không còn áp dụng cho quote_later nữa */}
                       {(() => {
-                        const todayVN = getVNTodayDate();
                         const sameBranch = selectedBill.branch?.branch_code === session?.branch_code;
-                        const isToday = selectedBill.business_date === todayVN;
-                        const canModify = userRole === "sys_admin" || (sameBranch && isToday);
+                        const sess = branchSessions[selectedBill.branch?.branch_code];
+                        const tripDeparted = sess ? String(sess.business_date) > String(selectedBill.business_date) : false;
+                        const canModify = userRole === "sys_admin" || (sameBranch && !tripDeparted);
                         if (!canModify || !(userRole === "admin" || userRole === "sys_admin")) return null;
                         if (selectedBill.delivery_status !== "pending" || selectedBill.payment_status !== "quote_later") return null;
                         return (
@@ -5782,12 +6400,12 @@ return (
                         return (
                           <button
                             type="button"
-                            onClick={handleConfirmDelivery}
-                            disabled={disabled}
+                            onClick={() => runExclusive(handleConfirmDelivery)}
+                            disabled={disabled || isSubmitting}
                             title={disabled ? disabledTitle : ""}
-                            className={disabled ? `${ui.btnPrimary} opacity-50 cursor-not-allowed` : ui.btnPrimary}
+                            className={(disabled || isSubmitting) ? `${ui.btnPrimary} opacity-50 cursor-not-allowed` : ui.btnPrimary}
                           >
-                            ✅ Hoàn tất giao hàng
+                            {isSubmitting ? "⏳ Đang xử lý..." : "✅ Hoàn tất giao hàng"}
                           </button>
                         );
                       })() : (selectedBill.delivery_status === "delivered"
@@ -5795,12 +6413,44 @@ return (
                             && selectedBill.payment_status !== "free") ? (
                         <button
                           type="button"
-                          onClick={handleConfirmPayment}
-                          className={ui.btnPrimary}
+                          onClick={() => runExclusive(handleConfirmPayment)}
+                          disabled={isSubmitting}
+                          className={`${ui.btnPrimary} disabled:opacity-50 disabled:cursor-not-allowed`}
                         >
-                          💰 Xác nhận thanh toán
+                          {isSubmitting ? "⏳ Đang xử lý..." : "💰 Xác nhận thanh toán"}
                         </button>
                       ) : null /* delivered + (paid|free) hoặc cancelled → ẩn nút */}
+                      {/* add-return-and-destroy-flow: nút Hoàn hàng (đơn pending, chi nhánh nhận, hàng đã tới) */}
+                      {userRole !== "boss" && selectedBill.delivery_status === "pending"
+                        && (userRole === "sys_admin" || session?.branch_id !== selectedBill.branch_id) && (() => {
+                        const todayVN = getVNTodayDate();
+                        const hasArrived = selectedBill.business_date && selectedBill.business_date < todayVN;
+                        const disabled = !hasArrived && userRole !== "sys_admin";
+                        return (
+                          <button
+                            type="button"
+                            onClick={() => setReturnDialog({ bill: selectedBill, step: "choose", returnFee: "", reason: "" })}
+                            disabled={disabled}
+                            title={disabled ? "Hàng chưa tới — chờ qua ngày mới xử lý hoàn hàng" : ""}
+                            className={`px-4 py-2 text-sm font-semibold text-red-700 bg-white border border-red-300 rounded-md transition ${disabled ? "opacity-50 cursor-not-allowed" : "hover:bg-red-50"}`}
+                          >
+                            ↩️ Hoàn hàng
+                          </button>
+                        );
+                      })()}
+                      {/* add-return-and-destroy-flow: nút bước 2/3 của Quay đầu (chi nhánh gốc) */}
+                      {userRole !== "boss" && selectedBill.delivery_status === "returned"
+                        && (userRole === "sys_admin" || session?.branch_id === selectedBill.branch_id) && (
+                        !selectedBill.return_confirmed_at ? (
+                          <button type="button" onClick={() => runExclusive(handleConfirmReturnArrived)} disabled={isSubmitting} className={`${ui.btnPrimary} disabled:opacity-50 disabled:cursor-not-allowed`}>
+                            {isSubmitting ? "⏳ Đang xử lý..." : "✅ Xác nhận đã hoàn hàng"}
+                          </button>
+                        ) : ((Number(selectedBill.shipping_fee) || 0) + (Number(selectedBill.return_fee) || 0) - (Number(selectedBill.actual_amount_paid) || 0) > 0) ? (
+                          <button type="button" onClick={() => runExclusive(handleCollectReturnPayment)} disabled={isSubmitting} className={`${ui.btnPrimary} disabled:opacity-50 disabled:cursor-not-allowed`}>
+                            {isSubmitting ? "⏳ Đang xử lý..." : "💰 Thu tiền hoàn"}
+                          </button>
+                        ) : null
+                      )}
                       {userRole !== "sys_admin" && userRole !== "boss" && (
                         <button
                           type="button"
@@ -5810,6 +6460,13 @@ return (
                           + Tạo đơn mới
                         </button>
                       )}
+                      <button
+                        type="button"
+                        onClick={() => { setBillPreviewSingle(true); setShowBillPreview(true); }}
+                        className="px-4 py-2 text-sm font-semibold text-blue-700 bg-white border border-blue-300 hover:bg-blue-50 rounded-md transition"
+                      >
+                        🖨️ In bill giao
+                      </button>
                     </div>
                   </div>
                   {/* add-audit-log §5.3: Lịch sử thay đổi bill (ẩn với member) */}
@@ -5826,7 +6483,7 @@ return (
               ) : feeOnlyEditMode ? (
               // §14.37: đơn "chưa có cước" — chỉ cho sửa cước phí, tái dùng handleStartCreateBill có sẵn
               // (các field khác đã populate sẵn từ bill gốc, không hiển thị để user không đụng vào).
-              <form onSubmit={handleStartCreateBill} className="p-4 md:p-8 space-y-4">
+              <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleStartCreateBill(e)); }} className="p-4 md:p-8 space-y-4">
                 <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
                   Đơn <b className="font-mono">{editingBillCode}</b> đang ở trạng thái "Chưa có cước" — chỉ cập nhật được cước phí, các thông tin khác giữ nguyên.
                 </div>
@@ -5838,12 +6495,10 @@ return (
                 </div>
                 <div>
                   <label className={`${ui.label} block mb-1`}>Cước phí vận chuyển (VND) *</label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
+                  <MoneyInput
                     autoFocus
-                    value={formatNumber(shippingFee)}
-                    onChange={(e) => setShippingFee(e.target.value.replace(/\D/g, ""))}
+                    value={shippingFee}
+                    onChange={setShippingFee}
                     placeholder="Nhập cước phí..."
                     className="w-full border rounded px-3 py-2 text-base"
                   />
@@ -5859,13 +6514,13 @@ return (
                   >
                     ❌ Hủy
                   </button>
-                  <button type="submit" className={ui.btnPrimary}>
-                    💾 Lưu Cước Phí
+                  <button type="submit" disabled={isSubmitting} className={`${ui.btnPrimary} disabled:opacity-60 disabled:cursor-not-allowed`}>
+                    {isSubmitting ? "⏳ Đang lưu..." : "💾 Lưu Cước Phí"}
                   </button>
                 </div>
               </form>
               ) : (
-              <form onSubmit={handleStartCreateBill} className="p-4 md:p-8 space-y-6">
+              <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleStartCreateBill(e)); }} className="p-4 md:p-8 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-orange-50/50 p-4 rounded-xl border border-orange-100">
                   <div>
                     <label className={`${ui.label} block mb-1`}>Chi Nhánh Gửi *</label>
@@ -5964,11 +6619,9 @@ return (
                     {!noDeclaredValue && (
                       <div>
                         <label className={`${ui.label} block mb-1`}>Giá trị hàng (VND) *</label>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={formatNumber(goodsValue)}
-                          onChange={(e) => setGoodsValue(e.target.value.replace(/\D/g, ""))}
+                        <MoneyInput
+                          value={goodsValue}
+                          onChange={setGoodsValue}
                           placeholder="Giá trị..."
                           className="w-full border rounded px-3 py-1.5 text-sm"
                         />
@@ -6100,11 +6753,9 @@ return (
                           MIỄN PHÍ
                         </div>
                       ) : (
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          value={formatNumber(shippingFee)}
-                          onChange={(e) => setShippingFee(e.target.value.replace(/\D/g, ""))}
+                        <MoneyInput
+                          value={shippingFee}
+                          onChange={setShippingFee}
                           placeholder={feeQuoteLater ? "Báo giá sau" : "Tiền cước..."}
                           className={`w-full border rounded px-3 py-1.5 text-sm ${feeQuoteLater ? "bg-amber-50 border-amber-300" : ""}`}
                         />
@@ -6228,6 +6879,9 @@ return (
                       >
                         🚫 Hủy Đơn Nháp
                       </button>
+                      {/* Ẩn trên UI theo yêu cầu (giữ code để bật lại sau): Lưu Thay Đổi + Hủy Thay Đổi khi mở lại nháp */}
+                      {false && (
+                      <>
                       <button
                         type="button"
                         onClick={handleSaveDraft}
@@ -6245,6 +6899,8 @@ return (
                       >
                         ❌ Hủy Thay Đổi
                       </button>
+                      </>
+                      )}
                       <button
                         type="button"
                         onClick={() => setShowBillPreview(true)}
@@ -6271,6 +6927,8 @@ return (
                     </>
                   ) : editingBillId ? (
                     <>
+                      {/* Ẩn "Hủy Đơn" trong flow sửa đơn (tránh nhầm với Hủy Thay Đổi); giữ code để bật lại sau */}
+                      {false && (
                       <button
                         type="button"
                         onClick={() => {
@@ -6285,6 +6943,7 @@ return (
                       >
                         🚫 Hủy Đơn
                       </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => {
@@ -6293,7 +6952,13 @@ return (
                         }}
                         className="px-4 py-2 text-sm font-semibold text-gray-700 bg-white border border-gray-300 hover:bg-gray-50 rounded-md transition"
                       >
-                        ❌ Hủy
+                        ❌ Hủy Thay Đổi
+                      </button>
+                      <button
+                        type="submit"
+                        className={ui.btnPrimary}
+                      >
+                        🚀 Cập Nhật Đơn
                       </button>
                       <button
                         type="button"
@@ -6301,12 +6966,6 @@ return (
                         className="px-4 py-2 text-sm font-semibold text-blue-700 bg-white border border-blue-300 hover:bg-blue-50 rounded-md transition"
                       >
                         📝 Xem Bill In
-                      </button>
-                      <button
-                        type="submit"
-                        className={ui.btnPrimary}
-                      >
-                        🚀 Cập Nhật Đơn
                       </button>
                       <button
                         type="button"
@@ -6323,8 +6982,9 @@ return (
                     <>
                       <button
                         type="button"
-                        onClick={handleSaveDraft}
-                        className={ui.btnSecondary}
+                        onClick={() => runExclusive(handleSaveDraft)}
+                        disabled={isSubmitting}
+                        className={`${ui.btnSecondary} disabled:opacity-60 disabled:cursor-not-allowed`}
                       >
                         💾 Lưu Nháp
                       </button>
@@ -6337,9 +6997,10 @@ return (
                       </button>
                       <button
                         type="submit"
-                        className={ui.btnPrimary}
+                        disabled={isSubmitting}
+                        className={`${ui.btnPrimary} disabled:opacity-60 disabled:cursor-not-allowed`}
                       >
-                        🚀 Tạo Hoá Đơn
+                        {isSubmitting ? "⏳ Đang tạo..." : "🚀 Tạo Hoá Đơn"}
                       </button>
                     </>
                   )}
@@ -6389,8 +7050,8 @@ return (
                   return (
                     <button
                       type="button"
-                      onClick={handleDeparture}
-                      disabled={!canDeparture}
+                      onClick={() => runExclusive(handleDeparture)}
+                      disabled={!canDeparture || isSubmitting}
                       className="px-3 py-1.5 text-xs font-bold text-white bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400 disabled:cursor-not-allowed rounded-lg shadow-sm transition flex items-center gap-1.5"
                       title={canDeparture
                         ? `Kết thúc chuyến hiện tại của kho ${warehouseBranch} — mã đơn hàng kế tiếp sẽ bắt đầu cho chuyến mới (chỉ kho ${warehouseBranch})`
@@ -6410,11 +7071,27 @@ return (
                 </button>
                 <span className="w-px h-5 bg-gray-300 mx-1 hidden md:block" />
                 <label className="text-xs font-bold text-gray-600">📅 Ngày:</label>
+                <button
+                  type="button"
+                  onClick={() => setWarehouseDate(addDaysISO(warehouseDate, -1))}
+                  className="px-3.5 py-2 text-lg font-extrabold border rounded-lg bg-white hover:bg-orange-50 text-orange-700 leading-none"
+                  title="Ngày trước"
+                >
+                  «
+                </button>
                 <VNDateInput
                   value={warehouseDate}
                   onChange={(e) => setWarehouseDate(e.target.value)}
                   className="border rounded px-2 py-1.5 text-xs outline-none focus:border-orange-500 w-28"
                 />
+                <button
+                  type="button"
+                  onClick={() => setWarehouseDate(addDaysISO(warehouseDate, 1))}
+                  className="px-3.5 py-2 text-lg font-extrabold border rounded-lg bg-white hover:bg-orange-50 text-orange-700 leading-none"
+                  title="Ngày sau"
+                >
+                  »
+                </button>
                 <button
                   type="button"
                   onClick={() => setWarehouseDate(getVNTodayDate())}
@@ -6433,7 +7110,7 @@ return (
                 { code: "GL", label: "Gia Lai" }
               ].map(b => {
                 // add-server-session §7: filter theo business_date (ngày kinh doanh) thay vì created_at (real timestamp).
-                const count = bills.filter(x => x.branch?.branch_code === b.code && x.delivery_status !== 'draft' && x.delivery_status !== 'cancelled' && x.business_date === warehouseDate).length;
+                const count = bills.filter(x => (x.current_branch?.branch_code || x.branch?.branch_code) === b.code && x.delivery_status !== 'draft' && x.delivery_status !== 'cancelled' && x.delivery_status !== 'destroyed' && x.business_date === warehouseDate).length;
                 const active = warehouseBranch === b.code;
                 return (
                   <button
@@ -6497,7 +7174,11 @@ return (
                       const insideCount = bill.inside_count ?? null;
                       const outsideCount = bill.outside_count ?? null;
                       const total = (insideCount ?? 0) + (outsideCount ?? 0);
-                      const canEditWarehouse = session?.role !== 'boss' && bill.branch?.branch_code === session?.branch_code;
+                      // Rule: danh sách bốc xếp của ngày nào chỉ sửa được đúng ngày lịch đó; qua ngày (business_date < hôm nay) → khóa. sys_admin bypass.
+                      const warehouseDayOpen = userRole === 'sys_admin' || (bill.business_date || '') >= getVNTodayDate();
+                      // Chi nhánh đang giữ hàng (current_branch cho đơn hoàn hàng, else gốc) mới được xếp Trong/Ngoài/Hàng ghép.
+                      const effBranchCode = bill.current_branch?.branch_code || bill.branch?.branch_code;
+                      const canEditWarehouse = session?.role !== 'boss' && effBranchCode === session?.branch_code && warehouseDayOpen;
                       // Chỉ validate nếu đã nhập ít nhất 1 trong 2 giá trị
                       const hasValue = insideCount !== null || outsideCount !== null;
                       const isValid = !hasValue || total === bill.package_count;
@@ -6679,6 +7360,8 @@ return (
                     <option value="all">Tất cả</option>
                     <option value="delivered">Đã giao</option>
                     <option value="pending">Chờ giao</option>
+                    <option value="returned">Hoàn hàng</option>
+                    <option value="destroyed">Tiêu hủy</option>
                     <option value="cancelled">Đã hủy</option>
                   </select>
                 </div>
@@ -6857,9 +7540,11 @@ return (
                           bill.delivery_status === 'delivered' ? 'bg-blue-100 text-blue-800' : 
                           bill.delivery_status === 'draft' ? 'bg-gray-100 text-gray-700' : 
                           bill.delivery_status === 'cancelled' ? 'bg-red-100 text-red-700' :
+                          bill.delivery_status === 'returned' ? 'bg-orange-100 text-orange-800' :
+                          bill.delivery_status === 'destroyed' ? 'bg-red-100 text-red-700' :
                           'bg-yellow-100 text-yellow-800'
                         }`}>
-                          {bill.delivery_status === 'delivered' ? 'Đã giao' : bill.delivery_status === 'draft' ? 'Nháp' : bill.delivery_status === 'cancelled' ? 'Đã hủy' : 'Chờ giao'}
+                          {bill.delivery_status === 'delivered' ? 'Đã giao' : bill.delivery_status === 'draft' ? 'Nháp' : bill.delivery_status === 'cancelled' ? 'Đã hủy' : bill.delivery_status === 'returned' ? 'Hoàn hàng' : bill.delivery_status === 'destroyed' ? 'Tiêu hủy' : 'Chờ giao'}
                         </span>
                       </td>
                       <td className="py-3.5 px-4">
@@ -7148,8 +7833,9 @@ return (
                 {!isMonthLocked(revenueTab, revenueMonth) && (
                   <button
                     type="button"
-                    onClick={() => handleCloseMonth(revenueTab, revenueMonth)}
-                    className="px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded"
+                    onClick={() => runExclusive(() => handleCloseMonth(revenueTab, revenueMonth))}
+                    disabled={isSubmitting}
+                    className="px-3 py-1.5 text-xs font-bold text-white bg-red-600 hover:bg-red-700 rounded disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     🔒 Khóa sổ tháng này
                   </button>
@@ -7170,7 +7856,7 @@ return (
                   ) : (
                   <>
                 <h3 className="font-bold text-sm text-red-700 border-l-4 border-red-500 pl-2">💸 Thêm Phiếu Chi Tiêu — Chi nhánh {branchFullName(revenueTab)}</h3>
-                <form onSubmit={handleAddExpense} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+                <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleAddExpense(e)); }} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
                   <div className="md:col-span-3">
                     <label className="block text-xs text-gray-500 mb-1">Số tiền chi (VND)</label>
                     <MoneyInput
@@ -7231,9 +7917,10 @@ return (
                   <div className="md:col-span-2">
                     <button
                       type="submit"
-                      className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-sm transition"
+                      disabled={isSubmitting}
+                      className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-sm transition disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      Thêm
+                      {isSubmitting ? "⏳..." : "Thêm"}
                     </button>
                   </div>
                   {expPeriodType === "month" && session?.role !== "sys_admin" && isMonthLocked(revenueTab, expPeriodMonth) && (
