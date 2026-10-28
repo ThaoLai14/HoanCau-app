@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { supabase } from "./supabaseClient";
+import { supabase, callAuthLogin } from "./supabaseClient";
 
 export default function LoginScreen({ onLogin }) {
   const [username, setUsername] = useState("");
@@ -29,49 +29,32 @@ export default function LoginScreen({ onLogin }) {
     try {
       const uname = username.trim().toLowerCase();
       if (!uname) throw new Error("Vui lòng nhập tên đăng nhập");
-      // Có dấu @ → email thật (sys_admin); không thì ghép domain nội bộ (nhân viên).
-      const email = uname.includes("@") ? uname : `${uname}@hoancau.internal`;
 
-      // 1. Đăng nhập qua Supabase Auth (JWT + bcrypt server-side)
-      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-      if (authError) {
-        // Không tiết lộ user tồn tại hay không → luôn thông báo generic
-        throw new Error("Tên đăng nhập hoặc mật khẩu không đúng");
+      // Đăng nhập qua Edge Function auth-login: server đếm số lần sai + khóa ở lần 3,
+      // kiểm tra disabled/locked, rồi trả session + profile khi đúng.
+      const result = await callAuthLogin(uname, password);
+      if (!result.ok) {
+        // Thông báo giữ nguyên câu từ server (đã ẩn thông tin nhạy cảm như số lần còn lại).
+        throw new Error(result.error || "Tên đăng nhập hoặc mật khẩu không đúng");
       }
 
-      // 2. Fetch profile từ public.profiles (RLS cho phép user đọc profile của mình)
-      const authUserId = authData.user?.id;
-      if (!authUserId) throw new Error("Đăng nhập lỗi: không có user id");
-
-      const { data: profile, error: profileError } = await supabase
-        .from("profiles")
-        .select("id, username, full_name, role, branch_id, is_disabled, is_deleted, branches(branch_code)")
-        .eq("id", authUserId)
-        .maybeSingle();
-
-      if (profileError) throw profileError;
-      if (!profile) {
-        // Auth user tồn tại nhưng thiếu profile → trigger fail hoặc metadata sai
-        await supabase.auth.signOut();
-        throw new Error("Tài khoản chưa được cấu hình. Liên hệ quản trị viên.");
-      }
-      // Chặn user bị disabled/deleted không đăng nhập được
-      if (profile.is_disabled || profile.is_deleted) {
-        await supabase.auth.signOut();
-        throw new Error("Tài khoản của bạn đã bị vô hiệu hóa. Liên hệ quản trị viên.");
+      const { access_token, refresh_token, profile } = result.data || {};
+      if (!access_token || !refresh_token || !profile) {
+        throw new Error("Đăng nhập lỗi: phản hồi không hợp lệ");
       }
 
-      // 3. Trả session lên App (giữ shape cũ để tối thiểu diff)
+      // Thiết lập session vào supabase client (JWT + refresh token) để mọi query sau có RLS.
+      const { error: setErr } = await supabase.auth.setSession({ access_token, refresh_token });
+      if (setErr) throw new Error("Không thiết lập được phiên đăng nhập: " + setErr.message);
+
+      // Trả session lên App (giữ shape cũ)
       onLogin({
         id: profile.id,
         username: profile.username,
         full_name: profile.full_name,
         role: profile.role,
         branch_id: profile.branch_id,
-        branch_code: profile.branches?.branch_code || "SG",
+        branch_code: profile.branch_code || "SG",
       });
     } catch (err) {
       setErrMsg(err.message || "Có lỗi xảy ra");

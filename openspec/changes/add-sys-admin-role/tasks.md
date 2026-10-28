@@ -747,6 +747,7 @@ Rule: trừ boss & sys_admin; chỉ hiện cho user **đã mở app TRƯỚC m�
 
 Implementation:
 - [x] 14.60.1 [src/App.jsx](../../../src/App.jsx) — `DAILY_REMINDERS` + `getVNNowHHMM`; effect so `giờ-mở-app < mốc ≤ now`, cap 18:00; modal overlay z cao nhất.
+- [x] 14.60.2 [src/App.jsx](../../../src/App.jsx) — đổi mốc Xuất Bến 16:40 → **16:30**; thêm mốc **17:45** nhắc cập nhật phiếu chi (`id: update-expense`, cùng quy tắc 1 lần/phiên, qua ngày không hiện).
 
 ### 14.61 MoneyInput — nhập tiền theo đơn vị nghìn (tự thêm "000")
 
@@ -796,6 +797,94 @@ Cần user làm trên Supabase (config, ngoài code):
 - [ ] 14.65.5 Bật **custom SMTP** (Resend/SendGrid/Gmail) trong Supabase → Auth → SMTP. Mail mặc định bị rate-limit nặng, không dùng được.
 - [ ] 14.65.6 Set **Site URL** + Redirect URLs = URL app (Auth → URL Configuration) để link reset trỏ đúng.
 - [ ] 14.65.7 Đổi email sys_admin sang email thật: `node scripts/set-user-email.mjs --username <sys> --email <gmail>` (hoặc Dashboard → Auth → Users). Sau đó sys_admin đăng nhập bằng email thật.
+
+### 14.66 Mã ngày (day_counter) chạy vô hạn A..Z,AA,AB... (bỏ ký tự lạ sau Z99)
+
+Vấn đề: công thức cũ dùng `String.fromCharCode(65 + letterIndex)` → sau Z99 sinh ký tự lạ (`[01`, `\01`, ... rồi chữ thường). ~7 năm nữa mới chạm, nhưng vẫn phải fix sẵn.
+
+Implementation:
+- [x] 14.66.1 [src/App.jsx](../../../src/App.jsx) — thêm `encodeDayLetters`/`decodeDayLetters` (base-26 bijective); `getDayCode` dùng encode, `parseDayCounterText` dùng decode + regex đa chữ cái. Z99 → AA01 → AB01 → … → ZZ99 → AAA01 (vô hạn). Tương thích ngược mã 1 chữ cái cũ. Verify round-trip bằng node.
+
+### 14.67 Danh sách bốc xếp bất biến theo ngày — Hướng A+ (chuyến đi + chuyến hoàn về tách riêng)
+
+Vấn đề: `handleReturnBill` ghi đè `business_date` = ngày hoàn → đơn biến mất khỏi danh sách bốc xếp ngày gửi gốc; filter bốc xếp còn loại `destroyed` → đơn tiêu hủy cũng biến mất. Danh sách mỗi ngày đã chốt lại bị thay đổi.
+
+Hướng A+: mỗi đơn xuất hiện tối đa 2 slot trong danh sách bốc xếp, mỗi slot có bộ số kiện (Trong/Ngoài/Hàng ghép) RIÊNG:
+- **Chuyến đi (outbound)**: chi nhánh gốc (`branch_id`) + ngày gửi gốc (`business_date`) — bất biến, giữ cả đơn `destroyed`.
+- **Chuyến hoàn về (return)**: chi nhánh chở về (`current_branch_id`) + ngày hoàn (`return_business_date`).
+
+Implementation:
+- [x] 14.67.1 [add-warehouse-return-slots.sql](../../../add-warehouse-return-slots.sql) — thêm 4 cột `return_business_date DATE`, `return_inside_count INTEGER`, `return_outside_count INTEGER`, `return_combined_goods TEXT` (IF NOT EXISTS). **Cần user chạy trên Supabase.**
+- [x] 14.67.2 [src/App.jsx](../../../src/App.jsx) `handleReturnBill` — bỏ ghi đè `business_date`; set `return_business_date = hôm nay` (giữ ngày gửi gốc). Audit đổi từ `business_date` → `return_business_date`.
+- [x] 14.67.3 [src/App.jsx](../../../src/App.jsx) `warehouseFilteredBills` — dựng 2 slot (gắn `_slot`), giữ `destroyed`; `whSlotVal` + `warehouseSummary` đọc số kiện theo slot. Badge đếm tab chi nhánh cũng tính 2 slot.
+- [x] 14.67.4 [src/App.jsx](../../../src/App.jsx) `handleUpdateLocationCounts` + `handleCombinedGoodsSave` — thêm tham số `slot`; chuyến về ghi cột `return_*`, check branch theo `current_branch` + ngày theo `return_business_date`.
+- [x] 14.67.5 [src/App.jsx](../../../src/App.jsx) render hàng bốc xếp — slot-aware (`effBranchCode`, `warehouseDayOpen`, số kiện, Hàng ghép, key `id_slot`); nhãn "↩ Hoàn về" cho slot return. `handlePrintWarehouseList` cũng theo 2 slot.
+
+### 14.68 Dọn data cũ: business_date bị lệch (đơn hoàn hàng + đơn bị sửa đời cũ)
+
+Vấn đề: sau khi deploy A+, data cũ còn sai. (1) Đơn `returned` cũ bị mất ngày gửi gốc (business_date đã = ngày hoàn). (2) Đơn chính thức bị sửa TRƯỚC khi có guard §5.4 bị đẩy `business_date` sang ngày sửa → biến mất khỏi danh sách bốc xếp ngày gửi gốc (vd 02GLA02 tạo 19/08 nhưng business_date = 04/09). Code đã fix sẵn (§5.4 chỉ đổi business_date cho draft), chỉ còn dọn data.
+
+Implementation:
+- [x] 14.68.1 [scripts/fix-returned-business-date.mjs](../../../scripts/fix-returned-business-date.mjs) — 5 đơn returned: `return_business_date = business_date` (ngày hoàn), `business_date` khôi phục từ audit `bill_returned` (ngày gửi gốc). Idempotent (chỉ chạm `return_business_date IS NULL`).
+- [x] 14.68.2 [scripts/fix-business-date-edit-bug.mjs](../../../scripts/fix-business-date-edit-bug.mjs) — 4 đơn (06SGA01, 02GLA02, 04SGA02, 03SGA03) lệch >1 ngày & trùng ngày sửa → đặt lại `business_date` = ngày tạo (VN của created_at). Bỏ qua đơn lệch +1 ngày (tạo sau Xuất Bến, hợp lệ) và 01SGA02 (lệch 1 ngày, mập mờ).
+- [x] 14.68.3 Script chẩn đoán phụ: [scripts/diagnose-returned-bills.mjs](../../../scripts/diagnose-returned-bills.mjs), [scripts/scan-business-date-drift.mjs](../../../scripts/scan-business-date-drift.mjs), [scripts/inspect-bill.mjs](../../../scripts/inspect-bill.mjs), [scripts/inspect-audit.mjs](../../../scripts/inspect-audit.mjs) (read-only).
+
+### 14.69 Tăng cỡ chữ cho dễ đọc (feedback: chữ nhỏ khó nhìn)
+
+Vấn đề: nội dung chính các trang (chi tiết đơn, Bốc Xếp, Tổng Hợp, Doanh Thu) ở `text-sm` (14px) + nhiều thông tin phụ 10–12px → khó nhìn với bảng nhiều dữ liệu.
+
+Giải pháp: nâng thang font qua Tailwind config (chỉ tăng chữ, GIỮ nguyên spacing → không vỡ layout).
+
+Implementation:
+- [x] 14.69.1 [tailwind.config.js](../../../tailwind.config.js) — override `fontSize`: xs 12→13px, sm 14→15px, base 16→17px, lg 18→19px (kèm line-height). Tự áp cho mọi `text-xs/sm/base/lg`.
+- [x] 14.69.2 [src/App.jsx](../../../src/App.jsx) — token `ui.label`/`ui.caption` từ `text-[11px]` → `text-xs` (13px); badge trạng thái + thanh toán Tổng Hợp `text-[11px]` → `text-xs`; số đếm tab Bốc Xếp `text-[10px]` → `text-[11px]`. Build pass.
+
+### 14.70 Tổng Hợp: hiện giờ giao/nhận + sort theo cột
+
+Yêu cầu: cột Ngày Gửi/Ngày Giao hiện thêm giờ hh:mm:ss bên dưới; click header (Mã Đơn, Ngày Gửi, Ngày Giao) để sắp xếp (lần 1 tăng dần, lần 2 giảm dần); mặc định load theo mã bill giảm dần.
+
+Implementation:
+- [x] 14.70.1 [src/App.jsx](../../../src/App.jsx) — helper `formatHMS(ts)` (giờ VN hh:mm:ss từ ISO). Ngày Gửi hiện giờ từ `created_at`, Ngày Giao hiện giờ từ `delivery_date`.
+- [x] 14.70.2 [src/App.jsx](../../../src/App.jsx) — state `allBillsSort {key,dir}` mặc định `bill_code/desc`; `filteredBills` sort theo key (bill_code | business_date+created_at | delivery_date, null delivery_date xuống cuối). `toggleBillsSort` (cột mới→asc, click lại→đảo) + `billsSortArrow` (▲/▼); 3 `<th>` click được.
+- [x] 14.70.3 [src/App.jsx](../../../src/App.jsx) — Bốc Xếp: cột "Giao tận nơi" đổi tên "Địa chỉ giao", hiện thẳng địa chỉ (bỏ badge "Có" + tooltip); trống → "Chưa có địa chỉ giao".
+
+### 14.71 Intake: gợi ý mặt hàng gửi (autocomplete danh sách cố định)
+
+Yêu cầu: ô "Mặt hàng gửi" gợi ý từ danh sách cố định (thức ăn, linh kiện, kính, mắt kính, gọng kính, tròng kính, hàng bảo hành, đồ xe, mỹ phẩm, thuốc, giày, quần áo, đồ dùng, mẫu xét nghiệm, mẫu dùng thử, hồ sơ, dụng cụ, đồ điện tử, đồ gia dụng). Gõ 1 ký tự là gợi ý; khớp không dấu và coi đ = d (gõ "d" ra "dụng cụ, đồ gia dụng").
+
+Implementation:
+- [x] 14.71.1 [src/GoodsTypeInput.jsx](../../../src/GoodsTypeInput.jsx) — component textarea (giữ nhập nhiều món) + dropdown gợi ý theo TOKEN đang gõ (sau dấu phẩy/xuống dòng cuối); `normalize` bỏ dấu + đ→d; substring match; chọn bằng click hoặc ↑↓/Enter, Esc đóng. Export `GOODS_TYPES`.
+- [x] 14.71.2 [src/App.jsx](../../../src/App.jsx) — import + thay `<textarea>` mặt hàng bằng `<GoodsTypeInput>`, giữ nguyên style/rows. Build pass.
+
+### 14.72 Danh mục chi: tách nhóm theo Ngày / Tháng
+
+Yêu cầu: màn Quản lý "Danh mục chi" chia 2 section Ngày/Tháng; form nhập phiếu chi cũng lọc danh mục theo kỳ (tab Ngày chỉ hiện danh mục ngày, tab Tháng chỉ hiện danh mục tháng).
+
+Implementation:
+- [x] 14.72.1 [add-expense-category-period.sql](../../../add-expense-category-period.sql) — thêm cột `expense_categories.period_type ('day'|'month')` + CHECK; mặc định 'day', set 'tiền lương'/'tiền thuê văn phòng' = 'month'. **Cần user chạy.**
+- [x] 14.72.2 [src/SysAdminPanel.jsx](../../../src/SysAdminPanel.jsx) `CategoriesTab` — 2 section (📅 Ngày / 🗓️ Tháng), mỗi section có form thêm riêng (set `period_type`) + bảng lọc theo nhóm; nút "⇄ Ngày/Tháng" chuyển danh mục giữa 2 nhóm.
+- [x] 14.72.3 [src/App.jsx](../../../src/App.jsx) — fetch `expense_categories` lấy thêm `period_type`; form thêm phiếu chi lọc `period_type === expPeriodType`; form sửa phiếu chi lọc theo `editingExpense.period_type` (luôn giữ danh mục hiện tại). Build pass.
+
+### 14.73 Thêm phiếu chi: form nhiều dòng (batch)
+
+Yêu cầu: UI form thêm phiếu chi — Loại kỳ (ngày/tháng) đưa lên trên cùng; mặc định 5 dòng trống, mỗi dòng gồm Số tiền (bắt buộc) + Danh mục (bắt buộc) + Lý do (tùy chọn); nhập vài dòng rồi submit thì chỉ lưu các dòng có nhập.
+
+Implementation:
+- [x] 14.73.1 [src/App.jsx](../../../src/App.jsx) — state `expRows` (mặc định 5 dòng `{amount,categoryId,note}`) + `makeBlankExpRows`/`updateExpRow`/`addExpRow`/`removeExpRow`. Nút "+ Thêm dòng".
+- [x] 14.73.2 [src/App.jsx](../../../src/App.jsx) `handleAddExpense` viết lại thành batch: lọc dòng "có nhập" (amount|category|note), validate mỗi dòng đủ số tiền>0 + danh mục, `insert([...])` 1 lần, audit từng dòng, reset về 5 dòng trống.
+- [x] 14.73.3 [src/App.jsx](../../../src/App.jsx) — form: Loại kỳ + Tháng áp dụng lên trên cùng; header cột + các dòng nhập; nút "💾 Lưu phiếu chi". Build pass.
+- [x] 14.73.4 [src/App.jsx](../../../src/App.jsx) — fix ghi nhầm kỳ: effect xoá `expRows` khi đổi `revenueDate/revenueMonth/revenueFilterType/revenueTab` (đổi ngày/tháng/tab/chi nhánh → dòng đang nhập bị xoá, không submit nhầm). "Tháng áp dụng" đổi thành ô chỉ-đọc (hiện tháng đang xem, không cho chọn tay). "Ngày áp dụng" (dd/mm/yyyy) hiện cạnh Loại kỳ khi theo ngày.
+- [x] 14.73.5 [src/App.jsx](../../../src/App.jsx) — ẩn form nhập phiếu chi cho **non-sys_admin** khi ngày ≠ hôm nay / tháng ≠ tháng hiện tại (hiện thông báo thay vì form). sys_admin vẫn thấy form (giữ quyền backdate sửa sai). `note` gửi "" thay null (cột NOT NULL).
+
+### 14.74 Mobile UX: highlight dòng + double-click mở chi tiết (Bốc Xếp / Tổng Hợp)
+
+Yêu cầu: trên mobile bảng dài khó nhìn. Sidebar thu gọn + nút menu (đã có sẵn). Chạm 1 lần dòng → highlight; double-click (bất kỳ ô nào) → mở chi tiết.
+
+Implementation:
+- [x] 14.74.1 [src/App.jsx](../../../src/App.jsx) — state `selectedRowKey`; bảng Tổng Hợp + Bốc Xếp: `onClick` highlight dòng (ring + bg cam), `onDoubleClick` mở chi tiết; `touchAction: manipulation` (double-tap không zoom). Ô nhập Trong/Ngoài/Hàng ghép (Bốc Xếp) `stopPropagation` để sửa bình thường.
+- [x] 14.74.2 [src/App.jsx](../../../src/App.jsx) — banner gợi ý "Xoay ngang điện thoại..." chỉ hiện trên mobile dọc (`md:hidden landscape:hidden`) ở đầu 2 bảng. (Không ép xoay ngang được trên web/iOS Safari → dùng gợi ý.)
+- [x] 14.74.3 Sidebar mobile đã sẵn: `fixed md:static` + drawer, mặc định thu gọn (`sidebarOpen=false`), mở bằng nút menu. Không đổi.
+
 
 
 

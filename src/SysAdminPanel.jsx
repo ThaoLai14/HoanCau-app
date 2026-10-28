@@ -69,6 +69,17 @@ export default function SysAdminPanel({ session, showToast, askConfirm, onDataCh
           >
             🏷️ Danh mục chi
           </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab("login-log")}
+            className={`flex-1 py-3 text-center transition border-b-2 ${
+              activeTab === "login-log"
+                ? "border-orange-500 text-orange-600 bg-orange-50/40"
+                : "border-transparent text-gray-500 hover:text-gray-700"
+            }`}
+          >
+            🔒 Nhật ký đăng nhập
+          </button>
         </div>
 
         <div className="p-4 md:p-6">
@@ -80,6 +91,9 @@ export default function SysAdminPanel({ session, showToast, askConfirm, onDataCh
           )}
           {activeTab === "categories" && (
             <CategoriesTab session={session} showToast={showToast} askConfirm={askConfirm} onDataChanged={onDataChanged} />
+          )}
+          {activeTab === "login-log" && (
+            <LoginLogTab showToast={showToast} />
           )}
         </div>
       </div>
@@ -93,7 +107,8 @@ export default function SysAdminPanel({ session, showToast, askConfirm, onDataCh
 function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
   const [categories, setCategories] = useState([]);
   const [loading, setLoading] = useState(false);
-  const [newName, setNewName] = useState("");
+  const [newDay, setNewDay] = useState("");
+  const [newMonth, setNewMonth] = useState("");
   const [editingId, setEditingId] = useState(null);
   const [editName, setEditName] = useState("");
   const [busy, setBusy] = useState(false);
@@ -102,7 +117,7 @@ function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
     setLoading(true);
     const { data, error } = await supabase
       .from("expense_categories")
-      .select("id, name, is_active, created_at")
+      .select("id, name, is_active, period_type, created_at")
       .order("created_at", { ascending: true });
     if (error) {
       showToast("Lỗi tải danh mục: " + error.message, "error");
@@ -114,15 +129,14 @@ function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
 
   useEffect(() => { load(); }, []);
 
-  const handleAdd = async (e) => {
-    e.preventDefault();
-    const name = newName.trim();
+  const handleAdd = async (periodType, rawName, clear) => {
+    const name = (rawName || "").trim();
     if (!name) return;
     setBusy(true);
     try {
       const { data, error } = await supabase
         .from("expense_categories")
-        .insert({ name })
+        .insert({ name, period_type: periodType })
         .select("id, name")
         .single();
       if (error) {
@@ -135,9 +149,9 @@ function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
         entityId: data?.id || null,
         entityLabel: name,
         action: "category_create",
-        changes: { name: [null, name] },
+        changes: { name: [null, name], period_type: [null, periodType] },
       });
-      setNewName("");
+      clear?.();
       await load();
       onDataChanged?.();
     } catch (err) {
@@ -217,36 +231,61 @@ function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
     }
   };
 
-  return (
-    <div className="space-y-4">
-      <div>
-        <h3 className="font-bold text-sm text-gray-800">Danh mục chi phí</h3>
-        <p className="text-xs text-gray-500">Dùng chung cho cả 2 chi nhánh. Không xoá được danh mục đang có phiếu chi.</p>
-      </div>
+  // Chuyển 1 danh mục giữa nhóm Ngày ⇄ Tháng.
+  const handleChangePeriod = async (cat) => {
+    const to = (cat.period_type || "day") === "day" ? "month" : "day";
+    const ok = await askConfirm({
+      title: "Chuyển nhóm danh mục?",
+      message: `Chuyển "${cat.name}" sang nhóm ${to === "month" ? "THÁNG" : "NGÀY"}?`,
+      confirmText: "Chuyển",
+    });
+    if (!ok) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase
+        .from("expense_categories")
+        .update({ period_type: to })
+        .eq("id", cat.id);
+      if (error) throw error;
+      showToast("Đã chuyển nhóm danh mục!");
+      logAudit({
+        entityType: "expense",
+        entityId: cat.id,
+        entityLabel: cat.name,
+        action: "category_update",
+        changes: { period_type: [cat.period_type || "day", to] },
+      });
+      await load();
+      onDataChanged?.();
+    } catch (err) {
+      showToast("Lỗi chuyển nhóm: " + err.message, "error");
+    } finally {
+      setBusy(false);
+    }
+  };
 
-      <form onSubmit={handleAdd} className="flex flex-wrap items-end gap-2">
-        <div className="flex-1 min-w-[200px]">
-          <label className="block text-xs text-gray-500 mb-1">Tên danh mục mới</label>
-          <input
-            type="text"
-            value={newName}
-            onChange={(e) => setNewName(e.target.value)}
-            placeholder="Ví dụ: tiền bốc xếp"
-            className="w-full border rounded px-3 py-1.5 text-sm"
-          />
+  const renderSection = (periodType, title, hint, newVal, setNewVal) => {
+    const list = categories.filter((c) => (c.period_type || "day") === periodType);
+    const otherLabel = periodType === "day" ? "Tháng" : "Ngày";
+    return (
+      <div className="space-y-3">
+        <div>
+          <h3 className="font-bold text-sm text-gray-800">{title}</h3>
+          <p className="text-xs text-gray-500">{hint}</p>
         </div>
-        <button
-          type="submit"
-          disabled={busy || !newName.trim()}
-          className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-1.5 px-4 rounded text-sm"
-        >
-          + Thêm
-        </button>
-      </form>
-
-      {loading ? (
-        <p className="text-sm text-gray-400">Đang tải...</p>
-      ) : (
+        <form onSubmit={(e) => { e.preventDefault(); handleAdd(periodType, newVal, () => setNewVal("")); }} className="flex flex-wrap items-end gap-2">
+          <div className="flex-1 min-w-[200px]">
+            <label className="block text-xs text-gray-500 mb-1">Tên danh mục mới</label>
+            <input
+              type="text"
+              value={newVal}
+              onChange={(e) => setNewVal(e.target.value)}
+              placeholder={periodType === "day" ? "Ví dụ: tiền bốc xếp" : "Ví dụ: tiền lương"}
+              className="w-full border rounded px-3 py-1.5 text-sm"
+            />
+          </div>
+          <button type="submit" disabled={busy || !newVal.trim()} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold py-1.5 px-4 rounded text-sm">+ Thêm</button>
+        </form>
         <div className="overflow-x-auto border rounded-lg">
           <table className="w-full text-sm">
             <thead>
@@ -256,7 +295,7 @@ function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
               </tr>
             </thead>
             <tbody className="divide-y">
-              {categories.map((cat) => (
+              {list.map((cat) => (
                 <tr key={cat.id} className="hover:bg-gray-50">
                   <td className="py-2 px-3">
                     {editingId === cat.id ? (
@@ -274,42 +313,43 @@ function CategoriesTab({ session, showToast, askConfirm, onDataChanged }) {
                   <td className="py-2 px-3 text-right whitespace-nowrap">
                     {editingId === cat.id ? (
                       <>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => handleRename(cat)}
-                          className="px-2 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded"
-                        >Lưu</button>
-                        <button
-                          type="button"
-                          onClick={() => setEditingId(null)}
-                          className="ml-1 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 rounded"
-                        >Hủy</button>
+                        <button type="button" disabled={busy} onClick={() => handleRename(cat)} className="px-2 py-1 text-[11px] font-semibold text-white bg-blue-600 hover:bg-blue-700 rounded">Lưu</button>
+                        <button type="button" onClick={() => setEditingId(null)} className="ml-1 px-2 py-1 text-[11px] font-semibold text-gray-600 hover:bg-gray-100 rounded">Hủy</button>
                       </>
                     ) : (
                       <>
-                        <button
-                          type="button"
-                          onClick={() => { setEditingId(cat.id); setEditName(cat.name); }}
-                          className="px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 rounded"
-                        >✎ Sửa</button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => handleDelete(cat)}
-                          className="ml-1 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 rounded"
-                        >🗑 Xoá</button>
+                        <button type="button" onClick={() => { setEditingId(cat.id); setEditName(cat.name); }} className="px-2 py-1 text-[11px] font-semibold text-blue-600 hover:bg-blue-50 rounded">✎ Sửa</button>
+                        <button type="button" disabled={busy} onClick={() => handleChangePeriod(cat)} title={`Chuyển sang nhóm ${otherLabel}`} className="ml-1 px-2 py-1 text-[11px] font-semibold text-amber-600 hover:bg-amber-50 rounded">⇄ {otherLabel}</button>
+                        <button type="button" disabled={busy} onClick={() => handleDelete(cat)} className="ml-1 px-2 py-1 text-[11px] font-semibold text-red-600 hover:bg-red-50 rounded">🗑 Xoá</button>
                       </>
                     )}
                   </td>
                 </tr>
               ))}
-              {categories.length === 0 && (
+              {list.length === 0 && (
                 <tr><td colSpan={2} className="py-6 text-center text-gray-400 text-sm">Chưa có danh mục nào.</td></tr>
               )}
             </tbody>
           </table>
         </div>
+      </div>
+    );
+  };
+
+  return (
+    <div className="space-y-6">
+      <p className="text-xs text-gray-500">Danh mục dùng chung cho cả 2 chi nhánh. Không xoá được danh mục đang có phiếu chi. Dùng nút ⇄ để chuyển danh mục giữa nhóm Ngày và Tháng.</p>
+      {loading ? (
+        <p className="text-sm text-gray-400">Đang tải...</p>
+      ) : (
+        <>
+          <section className="border rounded-xl p-4 bg-white">
+            {renderSection("day", "📅 Danh mục chi theo NGÀY", "Hiện ở form nhập phiếu chi khi đang xem tab Ngày.", newDay, setNewDay)}
+          </section>
+          <section className="border rounded-xl p-4 bg-white">
+            {renderSection("month", "🗓️ Danh mục chi theo THÁNG", "Hiện ở form nhập phiếu chi khi đang xem tab Tháng.", newMonth, setNewMonth)}
+          </section>
+        </>
       )}
     </div>
   );
@@ -491,7 +531,7 @@ function UsersTab({ session, showToast, askConfirm, onDataChanged }) {
     const [profRes, branchRes] = await Promise.all([
       supabase
         .from("profiles")
-        .select("id, username, full_name, role, branch_id, is_disabled, is_deleted, disabled_at, created_at, branches(branch_code)")
+        .select("id, username, full_name, role, branch_id, is_disabled, is_deleted, is_locked, locked_at, failed_login_count, disabled_at, created_at, branches(branch_code)")
         .order("created_at", { ascending: false }),
       supabase.from("branches").select("id, branch_code").order("branch_code"),
     ]);
@@ -538,6 +578,24 @@ function UsersTab({ session, showToast, askConfirm, onDataChanged }) {
     const res = await callAdminUsers({ action, target_id: p.id });
     if (res.ok) {
       showToast(`Đã ${label} user ${p.username}`, "success");
+      load();
+      onDataChanged?.();
+    } else {
+      showToast("Lỗi: " + (res.error || "unknown"), "error");
+    }
+  };
+
+  // Mở khóa tài khoản bị khóa do đăng nhập sai nhiều lần.
+  const handleUnlock = async (p) => {
+    const ok = await askConfirm({
+      title: "Mở khóa tài khoản?",
+      message: `Mở khóa "${p.username}" (${p.full_name}) — tài khoản bị khóa do nhập sai mật khẩu ${p.failed_login_count || 0} lần. Sau khi mở, user có thể đăng nhập lại.`,
+      confirmText: "🔓 Mở khóa",
+    });
+    if (!ok) return;
+    const res = await callAdminUsers({ action: "unlock", target_id: p.id });
+    if (res.ok) {
+      showToast(`Đã mở khóa ${p.username}`, "success");
       load();
       onDataChanged?.();
     } else {
@@ -687,6 +745,10 @@ function UsersTab({ session, showToast, askConfirm, onDataChanged }) {
                         <span className="text-[10px] font-bold bg-red-100 text-red-700 px-1.5 py-0.5 rounded">
                           🚫 Đã khóa
                         </span>
+                      ) : p.is_locked ? (
+                        <span className="text-[10px] font-bold bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded" title={`Khóa do nhập sai ${p.failed_login_count || 0} lần${p.locked_at ? " — " + new Date(p.locked_at).toLocaleString("vi-VN") : ""}`}>
+                          🔒 Khóa (sai MK)
+                        </span>
                       ) : (
                         <span className="text-[10px] font-bold bg-emerald-100 text-emerald-700 px-1.5 py-0.5 rounded">
                           ✅ Active
@@ -728,6 +790,16 @@ function UsersTab({ session, showToast, askConfirm, onDataChanged }) {
                         >
                           {p.is_disabled ? "✅" : "🚫"}
                         </button>
+                        {p.is_locked && !p.is_deleted && (
+                          <button
+                            type="button"
+                            onClick={() => handleUnlock(p)}
+                            title="Mở khóa (bị khóa do đăng nhập sai)"
+                            className="px-2 py-1 text-xs border rounded border-orange-300 text-orange-600 hover:bg-orange-50"
+                          >
+                            🔓
+                          </button>
+                        )}
                         <button
                           type="button"
                           onClick={() => setDeletingUser(p)}
@@ -1242,5 +1314,139 @@ function DeleteUserModal({ user, onClose, onSuccess, showToast }) {
         </div>
       </form>
     </ModalShell>
+  );
+}
+
+// =============================================================================
+// LoginLogTab — Nhật ký đăng nhập/đăng xuất (chỉ sys_admin đọc được qua RLS)
+// =============================================================================
+const LOGIN_REASON_LABEL = {
+  password: "🔑 Đăng nhập",
+  logout_button: "🚪 Đăng xuất",
+  idle_timeout: "⏱️ Hết phiên (2h không hoạt động)",
+  forced: "⛔ Bị buộc đăng xuất",
+  tab_close: "✖️ Đóng tab",
+};
+
+function vnTodayISODate() {
+  const now = new Date();
+  const vn = new Date(now.getTime() + (now.getTimezoneOffset() + 420) * 60000);
+  return vn.toISOString().slice(0, 10);
+}
+
+function fmtTimeVN(ts) {
+  try {
+    return new Date(ts).toLocaleTimeString("vi-VN", {
+      hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+      timeZone: "Asia/Ho_Chi_Minh",
+    });
+  } catch { return ""; }
+}
+
+function LoginLogTab({ showToast }) {
+  const [events, setEvents] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [date, setDate] = useState(vnTodayISODate());
+  const [userQ, setUserQ] = useState("");
+
+  const load = async () => {
+    setLoading(true);
+    // Khoảng 1 ngày theo giờ VN: [date 00:00 +07, date hôm sau 00:00 +07)
+    const start = new Date(`${date}T00:00:00+07:00`).toISOString();
+    const end = new Date(new Date(`${date}T00:00:00+07:00`).getTime() + 24 * 3600 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("login_events")
+      .select("id, user_id, username, full_name, user_role, branch_code, event_type, reason, created_at")
+      .gte("created_at", start)
+      .lt("created_at", end)
+      .order("created_at", { ascending: false });
+    if (error) showToast("Lỗi tải nhật ký: " + error.message, "error");
+    setEvents(data || []);
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date]);
+
+  const groups = useMemo(() => {
+    const q = userQ.trim().toLowerCase();
+    const byUser = new Map();
+    for (const e of events) {
+      if (q && !((e.username || "").toLowerCase().includes(q) || (e.full_name || "").toLowerCase().includes(q))) continue;
+      const key = e.user_id || e.username || "?";
+      if (!byUser.has(key)) {
+        byUser.set(key, { username: e.username, full_name: e.full_name, role: e.user_role, branch: e.branch_code, events: [], logins: 0, logouts: 0 });
+      }
+      const g = byUser.get(key);
+      g.events.push(e);
+      if (e.event_type === "login") g.logins++;
+      else g.logouts++;
+    }
+    return [...byUser.values()].sort((a, b) => (a.full_name || "").localeCompare(b.full_name || ""));
+  }, [events, userQ]);
+
+  const shiftDay = (delta) => {
+    const d = new Date(`${date}T00:00:00+07:00`);
+    d.setDate(d.getDate() + delta);
+    setDate(d.toISOString().slice(0, 10));
+  };
+
+  return (
+    <div className="space-y-4">
+      {/* Bộ lọc */}
+      <div className="bg-gray-50 border rounded-lg p-3 flex flex-wrap items-end gap-2">
+        <div>
+          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Ngày</label>
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={() => shiftDay(-1)} className="px-2 py-1.5 text-sm border rounded hover:bg-gray-100">‹</button>
+            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border rounded px-2 py-1.5 text-sm" />
+            <button type="button" onClick={() => shiftDay(1)} className="px-2 py-1.5 text-sm border rounded hover:bg-gray-100">›</button>
+            <button type="button" onClick={() => setDate(vnTodayISODate())} className="px-2.5 py-1.5 text-xs font-bold border rounded bg-white hover:bg-orange-50">Hôm nay</button>
+          </div>
+        </div>
+        <div className="flex-1 min-w-[200px]">
+          <label className="block text-[10px] font-bold text-gray-500 uppercase mb-1">Tìm nhân viên</label>
+          <input type="text" value={userQ} onChange={(e) => setUserQ(e.target.value)} placeholder="Username / họ tên..." className="w-full border rounded px-3 py-1.5 text-sm outline-none focus:border-orange-500" />
+        </div>
+        <button type="button" onClick={load} className="px-3 py-1.5 text-xs font-bold border rounded bg-white hover:bg-gray-100">🔄 Tải lại</button>
+      </div>
+
+      {loading ? (
+        <p className="text-sm text-gray-400 italic py-6 text-center">⏳ Đang tải...</p>
+      ) : groups.length === 0 ? (
+        <p className="text-sm text-gray-400 italic py-6 text-center">Không có hoạt động đăng nhập nào trong ngày này.</p>
+      ) : (
+        <div className="space-y-3">
+          {groups.map((g) => (
+            <div key={(g.username || "?") + g.full_name} className="border rounded-lg overflow-hidden">
+              <div className="bg-gray-50 px-4 py-2 flex flex-wrap items-center gap-2 border-b">
+                <span className="font-bold text-gray-800">{g.full_name || g.username}</span>
+                <span className="font-mono text-xs text-gray-500">@{g.username}</span>
+                {g.role && <span className="text-[10px] font-bold bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded">{g.role}</span>}
+                {g.branch && <span className="text-[10px] font-bold bg-gray-200 text-gray-700 px-1.5 py-0.5 rounded">{g.branch}</span>}
+                <span className="ml-auto text-xs font-semibold text-emerald-700">Đăng nhập: {g.logins} lần</span>
+                <span className="text-xs font-semibold text-gray-500">· Đăng xuất: {g.logouts}</span>
+              </div>
+              <ul className="divide-y">
+                {g.events.map((e) => (
+                  <li key={e.id} className="px-4 py-2 flex items-center gap-3 text-sm">
+                    <span className="font-mono text-gray-800 w-20">{fmtTimeVN(e.created_at)}</span>
+                    <span className={e.event_type === "login" ? "text-emerald-700 font-semibold" : "text-gray-600"}>
+                      {LOGIN_REASON_LABEL[e.reason] || (e.event_type === "login" ? "🔑 Đăng nhập" : "🚪 Đăng xuất")}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <p className="text-[11px] text-gray-400 italic">
+        Ghi chú: đăng xuất chỉ ghi khi bấm nút Đăng xuất hoặc hết phiên 2h. Đóng tab trực tiếp không ghi được (giới hạn chung của trình duyệt).
+      </p>
+    </div>
   );
 }

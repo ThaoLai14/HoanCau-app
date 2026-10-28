@@ -8,13 +8,13 @@
 //   - diffObjects(a, b, allowed)  → tính diff của các field allowed → object {field:[old,new]}
 //   - BILL_AUDIT_FIELDS / CLIENT_AUDIT_FIELDS → whitelist field
 //
-// Session shape: đọc từ localStorage 'hc_session' = { id, username, full_name, role, branch_id, branch_code }
+// Session shape: đọc từ sessionStorage 'hc_session' = { id, username, full_name, role, branch_id, branch_code }
 
 import { supabase } from "./supabaseClient";
 
 function getSession() {
   try {
-    const raw = localStorage.getItem("hc_session");
+    const raw = sessionStorage.getItem("hc_session");
     return raw ? JSON.parse(raw) : null;
   } catch (_) {
     return null;

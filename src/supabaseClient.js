@@ -9,7 +9,38 @@ if (!supabaseUrl || !supabaseAnonKey) {
   )
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey)
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  // Phiên sống trong sessionStorage → tự mất khi ĐÓNG trình duyệt/tab (bảo mật: ai mở lại
+  // phải đăng nhập lại). F5/reload trong cùng tab vẫn giữ phiên.
+  auth: {
+    storage: typeof window !== 'undefined' ? window.sessionStorage : undefined,
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+})
+
+/**
+ * Gọi Edge Function `auth-login` để đăng nhập (đếm khóa ở server).
+ * Dùng anon key vì chưa có JWT. Trả `{ ok, status, data, error }`.
+ */
+export async function callAuthLogin(username, password) {
+  try {
+    const res = await fetch(`${supabaseUrl}/functions/v1/auth-login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        apikey: supabaseAnonKey,
+        Authorization: `Bearer ${supabaseAnonKey}`,
+      },
+      body: JSON.stringify({ action: 'login', username, password }),
+    })
+    const json = await res.json().catch(() => ({}))
+    return { ok: res.ok, status: res.status, data: json, error: json?.error }
+  } catch (err) {
+    return { ok: false, status: 0, error: err?.message || 'Network error' }
+  }
+}
 
 /**
  * Gọi Edge Function `admin-users` với JWT của user hiện tại.

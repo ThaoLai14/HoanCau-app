@@ -14,6 +14,7 @@
 //   reset_password       - Reset password user khác (target_id, new_password)
 //   disable              - Khóa tạm user (target_id)
 //   enable               - Mở khóa user (target_id)
+//   unlock               - Mở khóa tài khoản bị khóa do đăng nhập sai (target_id)
 //   delete               - Xóa vĩnh viễn user (soft delete + ban) (target_id)
 //   verify_pin           - Kiểm tra PIN của sys_admin gọi (pin)
 //   set_pin              - Đổi PIN của sys_admin gọi (new_pin, old_pin optional)
@@ -374,6 +375,43 @@ async function actionEnable(
   return jsonResponse(200, { success: true });
 }
 
+/**
+ * Mở khóa tài khoản bị khóa tự động do đăng nhập sai nhiều lần.
+ * Reset failed_login_count + is_locked (khác với enable/disable do sys_admin chủ động).
+ */
+async function actionUnlock(
+  admin: ReturnType<typeof makeAdminClient>,
+  ctx: CallerContext,
+  body: Record<string, unknown>,
+): Promise<Response> {
+  const target_id = String(body.target_id || '');
+  if (!target_id) return jsonResponse(400, { error: 'target_id required' });
+
+  const { data: target } = await admin
+    .from('profiles')
+    .select('username, is_locked, failed_login_count')
+    .eq('id', target_id)
+    .maybeSingle();
+  if (!target) return jsonResponse(404, { error: 'target not found' });
+
+  const { error: uErr } = await admin
+    .from('profiles')
+    .update({ is_locked: false, failed_login_count: 0, locked_at: null })
+    .eq('id', target_id);
+  if (uErr) return jsonResponse(400, { error: uErr.message });
+
+  await logAuditSysAdmin(admin, ctx, {
+    action: 'user_unlocked',
+    entityType: 'profile',
+    entityId: target_id,
+    entityLabel: target.username,
+    changes: { is_locked: [true, false] },
+    note: `Mở khóa (trước đó sai ${target.failed_login_count ?? 0} lần)`,
+  });
+
+  return jsonResponse(200, { success: true });
+}
+
 async function actionVerifyPin(
   admin: ReturnType<typeof makeAdminClient>,
   ctx: CallerContext,
@@ -542,6 +580,8 @@ Deno.serve(async (req) => {
         return await actionDisableOrDelete(admin, ctx, body, 'delete');
       case 'enable':
         return await actionEnable(admin, ctx, body);
+      case 'unlock':
+        return await actionUnlock(admin, ctx, body);
       case 'verify_pin':
         return await actionVerifyPin(admin, ctx, body);
       case 'set_pin':

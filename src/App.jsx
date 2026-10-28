@@ -3,6 +3,7 @@ import { createPortal } from "react-dom";
 import { supabase } from "./supabaseClient";
 import LoginScreen from "./LoginScreen";
 import ClientAutocomplete from "./ClientAutocomplete";
+import GoodsTypeInput from "./GoodsTypeInput";
 import { logAudit, fetchAuditLog, diffObjects, BILL_AUDIT_FIELDS, CLIENT_AUDIT_FIELDS } from "./auditLog";
 import { ACTION_LABELS, renderChanges, formatVnd as auditFormatVnd } from "./auditLabels";
 import BillHistorySection from "./BillHistorySection";
@@ -26,14 +27,57 @@ return new Intl.NumberFormat("vi-VN", {
 }).format(value);
 };
 
-// Hàm sinh mã ngày hệ thống (Fix bug getDayCode cứng)
+// SĐT dễ nhìn: 10 số → 4.3.3 (0901.234.567); 11 số → 4.3.4; khác → giữ nguyên.
+const formatPhone = (raw) => {
+  const d = String(raw || "").replace(/\D/g, "");
+  if (d.length === 10) return `${d.slice(0, 4)}.${d.slice(4, 7)}.${d.slice(7)}`;
+  if (d.length === 11) return `${d.slice(0, 4)}.${d.slice(4, 7)}.${d.slice(7)}`;
+  return raw || "";
+};
+
+// YYYY-MM-DD → dd/mm/yyyy.
+const formatDMY = (iso) => {
+  if (!iso) return "";
+  const [y, m, d] = String(iso).split("-");
+  return (d && m && y) ? `${d}/${m}/${y}` : iso;
+};
+
+// Giờ VN hh:mm:ss từ timestamp ISO (có timezone). "" nếu rỗng.
+const formatHMS = (ts) => {
+  if (!ts) return "";
+  try {
+    return new Date(ts).toLocaleTimeString("vi-VN", {
+      hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit",
+      timeZone: "Asia/Ho_Chi_Minh",
+    });
+  } catch { return ""; }
+};
+
+// Chuyển chỉ số chữ cái (0-based) ↔ "A".."Z","AA","AB"... (base-26 bijective → chạy vô hạn,
+// không còn sinh ký tự lạ sau Z99 như công thức cũ String.fromCharCode).
+const encodeDayLetters = (n) => {
+let m = n + 1;
+let s = "";
+while (m > 0) {
+  const r = (m - 1) % 26;
+  s = String.fromCharCode(65 + r) + s;
+  m = Math.floor((m - 1) / 26);
+}
+return s;
+};
+const decodeDayLetters = (s) => {
+let n = 0;
+for (const ch of String(s).toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+return n - 1;
+};
+
+// Hàm sinh mã ngày hệ thống: A01..A99 → B01.. → Z99 → AA01 → AB01... (không giới hạn)
 const getDayCode = (dayIndex) => {
 const adjustedIndex = dayIndex - 1;
 const letterIndex = Math.floor(adjustedIndex / 99);
 const numberPart = (adjustedIndex % 99) + 1;
-const letter = String.fromCharCode(65 + letterIndex);
 const numberStr = numberPart.toString().padStart(2, "0");
-return `${letter}${numberStr}`;
+return `${encodeDayLetters(letterIndex)}${numberStr}`;
 };
 
 // ============================================================
@@ -84,9 +128,14 @@ const DAILY_REMINDERS = [
     message: "Đã 16:00 — vui lòng kiểm tra lại danh sách hàng hóa bốc xếp hôm nay (Trong / Ngoài / Hàng ghép) trước khi xe chạy.",
   },
   {
-    id: "xuat-ben", time: "16:40", icon: "🚛",
+    id: "xuat-ben", time: "16:30", icon: "🚛",
     title: "Nhắc bấm Xuất Bến",
-    message: "Đã 16:40 — nhớ bấm \"Xuất Bến\" để chốt chuyến và cập nhật mã đơn tiếp theo cho ngày mới.",
+    message: "Đã 16:30 — nhớ bấm \"Xuất Bến\" để chốt chuyến và cập nhật mã đơn tiếp theo cho ngày mới.",
+  },
+  {
+    id: "update-expense", time: "17:45", icon: "🧾",
+    title: "Nhắc cập nhật phiếu chi",
+    message: "Đã 17:45 — nhớ cập nhật phiếu chi trong ngày để chốt sổ.",
   },
 ];
 
@@ -97,12 +146,12 @@ const addDaysISO = (isoDate, n) => {
   return d.toISOString().slice(0, 10);
 };
 
-// Parse day_counter TEXT (vd "A02") → numeric counter cho getDayCode
+// Parse day_counter TEXT (vd "A02", "AA01") → numeric counter (nghịch đảo của getDayCode)
 const parseDayCounterText = (text) => {
   if (!text || typeof text !== 'string') return 1;
-  const m = text.match(/^([A-Z])(\d{1,3})$/);
+  const m = text.match(/^([A-Za-z]+)(\d{1,3})$/);
   if (!m) return 1;
-  const letterIndex = m[1].charCodeAt(0) - 65;
+  const letterIndex = decodeDayLetters(m[1]);
   const num = parseInt(m[2], 10) || 1;
   return letterIndex * 99 + num;
 };
@@ -385,8 +434,8 @@ const formatDateTime = (val) => {
 // Chỉ dùng màu khác (green/amber/red) khi thật sự cần báo trạng thái.
 const ui = {
   // Typography
-  caption:       "text-[11px] text-gray-500",                                  // metadata, timestamp
-  label:         "text-[11px] font-semibold text-gray-500 uppercase tracking-wide", // label trên field
+  caption:       "text-xs text-gray-500",                                      // metadata, timestamp
+  label:         "text-xs font-semibold text-gray-500 uppercase tracking-wide", // label trên field
   helper:        "text-xs text-gray-500",                                       // hint / mô tả nhỏ
   body:          "text-sm text-gray-700",                                       // body chính
   value:         "text-sm font-medium text-gray-900",                           // giá trị hiển thị
@@ -889,7 +938,7 @@ export default function App() {
 // (nếu đọc trong useEffect, render đầu tiên sẽ dùng default "SG")
 const [session, setSession] = useState(() => {
   try {
-    const raw = localStorage.getItem("hc_session");
+    const raw = sessionStorage.getItem("hc_session");
     return raw ? JSON.parse(raw) : null;
   } catch (_) {
     return null;
@@ -903,9 +952,9 @@ const userFullname = session?.full_name || session?.username || "User";
 const loggedBranch = session?.branch_code || "SG"; // SG | GL
 
 const [currentTab, setCurrentScreenRaw] = useState(() => {
-  // Landing screen theo role, kể cả khi refresh trang (session khôi phục từ localStorage).
+  // Landing screen theo role, kể cả khi refresh trang (session khôi phục từ sessionStorage).
   try {
-    const raw = localStorage.getItem("hc_session");
+    const raw = sessionStorage.getItem("hc_session");
     const sess = raw ? JSON.parse(raw) : null;
     if (sess?.role === "sys_admin") return "sys-admin";
     if (sess?.role === "boss") return "revenue";
@@ -913,6 +962,8 @@ const [currentTab, setCurrentScreenRaw] = useState(() => {
   return "bills"; // 'clients' | 'bills' | 'warehouse' | 'all-bills' | 'revenue' | 'debt'
 });
 const [sidebarOpen, setSidebarOpen] = useState(false);
+// Mobile UX: chạm 1 lần highlight dòng, double-click (bất kỳ ô nào) mở chi tiết.
+const [selectedRowKey, setSelectedRowKey] = useState(null);
 const setCurrentScreen = (s) => { setCurrentScreenRaw(s); setSidebarOpen(false); };
 const [currentBranch, setCurrentBranch] = useState(loggedBranch);
 const [loading, setLoading] = useState(false);
@@ -951,6 +1002,8 @@ const [payments, setPayments] = useState([]);
 // --- FILTERS cho TỔNG HỢP ĐƠN HÀNG ---
 const [allBillsTab, setAllBillsTab] = useState(loggedBranch || "SG"); // "SG" | "GL"
 const [allBillsPage, setAllBillsPage] = useState(1);
+// Sắp xếp Tổng Hợp: key = bill_code | business_date | delivery_date; dir asc/desc. Mặc định mã bill giảm dần.
+const [allBillsSort, setAllBillsSort] = useState({ key: "bill_code", dir: "desc" });
 const BILLS_PER_PAGE = 100;
 const [allBillsFilter, setAllBillsFilter] = useState({
   billCode: "",
@@ -1058,6 +1111,9 @@ const [expNote, setExpNote] = useState("");
 const [expCategoryId, setExpCategoryId] = useState("");
 const [expPeriodType, setExpPeriodType] = useState("day"); // 'day' | 'month'
 const [expPeriodMonth, setExpPeriodMonth] = useState(() => getVNTodayDate().slice(0, 7)); // "YYYY-MM"
+// Form nhiều dòng: mặc định 5 dòng trống, mỗi dòng {amount, categoryId, note}. Submit lưu các dòng có nhập.
+const makeBlankExpRows = (n = 5) => Array.from({ length: n }, () => ({ amount: "", categoryId: "", note: "" }));
+const [expRows, setExpRows] = useState(() => makeBlankExpRows());
 // Revamp §18: state cho edit + soft-delete expense
 const [editingExpense, setEditingExpense] = useState(null); // {id, amount, note, created_at, branch_id, branch_code}
 const [expEditAmount, setExpEditAmount] = useState("");
@@ -1090,17 +1146,17 @@ useEffect(() => {
     try {
       const { data } = await supabase.auth.getSession();
       const cached = (() => {
-        try { return JSON.parse(localStorage.getItem("hc_session") || "null"); } catch { return null; }
+        try { return JSON.parse(sessionStorage.getItem("hc_session") || "null"); } catch { return null; }
       })();
       if (!data.session) {
         // Auth expired / signed out → clear cache
         if (cached) {
-          localStorage.removeItem("hc_session");
+          sessionStorage.removeItem("hc_session");
           setSession(null);
         }
       } else if (cached && cached.id !== data.session.user.id) {
         // Cache lệch id (data cũ trước migration) → clear để force login lại
-        localStorage.removeItem("hc_session");
+        sessionStorage.removeItem("hc_session");
         setSession(null);
         await supabase.auth.signOut();
       } else if (data.session && cached) {
@@ -1123,7 +1179,7 @@ useEffect(() => {
             const changed = ["full_name", "role", "branch_id", "branch_code", "username"]
               .some((k) => cached[k] !== fresh[k]);
             if (changed) {
-              localStorage.setItem("hc_session", JSON.stringify(fresh));
+              sessionStorage.setItem("hc_session", JSON.stringify(fresh));
               setSession(fresh);
             }
           }
@@ -1133,7 +1189,7 @@ useEffect(() => {
 
     const { data: sub } = supabase.auth.onAuthStateChange((event) => {
       if (event === "SIGNED_OUT") {
-        localStorage.removeItem("hc_session");
+        sessionStorage.removeItem("hc_session");
         setSession(null);
       } else if (event === "PASSWORD_RECOVERY") {
         // Mở app từ link "quên mật khẩu" → hiện màn đặt lại mật khẩu.
@@ -1338,7 +1394,8 @@ useEffect(() => {
 
 // Callback truyền cho LoginScreen để gán session sau khi login OK
 const handleLoginSuccess = (sess) => {
-  localStorage.setItem("hc_session", JSON.stringify(sess));
+  sessionStorage.setItem("hc_session", JSON.stringify(sess));
+  sessionStorage.setItem("hc_last_activity", String(Date.now())); // mốc idle cho phiên mới
   setSession(sess);
   // Sys_admin landing = trang Quản Trị; boss landing = Quản Lý Doanh Thu; các role khác landing = Phiếu Gửi Hàng
   if (sess.role === "sys_admin") {
@@ -1352,21 +1409,41 @@ const handleLoginSuccess = (sess) => {
   }
 };
 
-// Hàm logout — signOut Supabase Auth (invalidate JWT + refresh token) + clear cache
-const handleLogout = async () => {
+// Ghi 1 bản ghi logout vào login_events (best-effort, trước khi signOut để còn JWT qua RLS).
+const recordLogout = async (reasonCode) => {
+  try {
+    if (!session?.id) return;
+    await supabase.from("login_events").insert({
+      user_id: session.id,
+      username: session.username,
+      full_name: session.full_name,
+      user_role: session.role,
+      branch_code: session.branch_code,
+      event_type: "logout",
+      reason: reasonCode,
+      user_agent: navigator.userAgent,
+    });
+  } catch (_) { /* best-effort — không chặn logout */ }
+};
+
+// Hàm logout — ghi login_events + signOut Supabase Auth (invalidate JWT + refresh token) + clear cache
+const handleLogout = async (reasonCode = "logout_button") => {
+  await recordLogout(reasonCode);
   try {
     await supabase.auth.signOut();
   } catch (_) {
     // signOut fail vẫn tiếp tục clear local state
   }
-  localStorage.removeItem("hc_session");
+  sessionStorage.removeItem("hc_session");
+  sessionStorage.removeItem("hc_last_activity");
   setSession(null);
   resetCreateBillForm();
 };
 
 // Handler cho SessionMonitor khi phát hiện disabled/idle → auto logout
 const handleForceLogout = async (reason) => {
-  await handleLogout();
+  const code = /vô hiệu/i.test(reason || "") ? "forced" : "idle_timeout";
+  await handleLogout(code);
   showToast(reason || "Phiên đăng nhập đã kết thúc", "error");
 };
 
@@ -1464,7 +1541,7 @@ const fetchData = async (opts) => {
     // Non-fatal: nếu migration chưa chạy (bảng chưa tồn tại) thì bỏ qua, không chặn luồng.
     const { data: catData, error: errCat } = await supabase
       .from("expense_categories")
-      .select("id, name, is_active")
+      .select("id, name, is_active, period_type")
       .order("created_at", { ascending: true });
     if (errCat) {
       console.warn("[expense_categories] chưa sẵn sàng:", errCat.message);
@@ -1599,13 +1676,17 @@ const handleDeparture = async () => {
 // In danh sách bốc xếp — mở tab preview với table + nút In / Tải Excel (.xls).
 // Xuất TOÀN BỘ đơn theo filter (branch + business_date), KHÔNG áp dụng pagination.
 const handlePrintWarehouseList = () => {
-  const rows = bills.filter(b =>
-    (b.current_branch?.branch_code || b.branch?.branch_code) === warehouseBranch &&
-    b.delivery_status !== 'draft' &&
-    b.delivery_status !== 'cancelled' &&
-    b.delivery_status !== 'destroyed' &&
-    b.business_date === warehouseDate
-  ).sort((a, b) => (a.bill_code || "zzzz").localeCompare(b.bill_code || "zzzz"));
+  // A+: cùng logic 2 slot như danh sách bốc xếp trên màn hình (chuyến đi + chuyến hoàn về), giữ đơn tiêu hủy.
+  const rows = [];
+  for (const b of bills) {
+    if (!b || b.delivery_status === 'draft' || b.delivery_status === 'cancelled') continue;
+    if (b.branch?.branch_code === warehouseBranch && b.business_date === warehouseDate) { rows.push({ ...b, _slot: 'outbound' }); continue; }
+    if (b.delivery_status === 'returned' && b.current_branch?.branch_code === warehouseBranch && b.return_business_date === warehouseDate) { rows.push({ ...b, _slot: 'return' }); }
+  }
+  rows.sort((a, b) => (a.bill_code || "zzzz").localeCompare(b.bill_code || "zzzz"));
+  const slotInside = (b) => (b._slot === 'return' ? b.return_inside_count : b.inside_count);
+  const slotOutside = (b) => (b._slot === 'return' ? b.return_outside_count : b.outside_count);
+  const slotCombined = (b) => (b._slot === 'return' ? b.return_combined_goods : b.combined_goods);
   const branchLabel = warehouseBranch === "SG" ? "Sài Gòn" : "Gia Lai";
   const esc = (v) => String(v ?? "")
     .replace(/&/g, "&amp;")
@@ -1624,15 +1705,15 @@ const handlePrintWarehouseList = () => {
   const tbody = rows.map((b, i) => `
     <tr>
       <td class="center" style="${cellStyle};text-align:center">${i + 1}</td>
-      <td class="mono bold" style="${cellStyle};font-family:Consolas,monospace;font-weight:700">${esc(b.bill_code || "(Nháp)")}</td>
+      <td class="mono bold" style="${cellStyle};font-family:Consolas,monospace;font-weight:700">${esc(b.bill_code || "(Nháp)")}${b._slot === 'return' ? ' (Hoàn về)' : ''}</td>
       <td style="${cellStyle}">${esc(b.sender_name_text || "—")}</td>
       <td style="${cellStyle}">${esc(b.receiver_name_text || "—")}</td>
       <td style="${cellStyle}">${esc(b.goods_type || "")}</td>
       <td class="center" style="${cellStyle};text-align:center">${b.package_count ?? 0}</td>
       <td class="right" style="${cellStyle};text-align:right;white-space:nowrap">${esc(feeCell(b))}</td>
-      <td class="center" style="${cellStyle};text-align:center">${b.inside_count ?? ""}</td>
-      <td class="center" style="${cellStyle};text-align:center">${b.outside_count ?? ""}</td>
-      <td style="${cellStyle}">${esc(b.combined_goods || "")}</td>
+      <td class="center" style="${cellStyle};text-align:center">${slotInside(b) ?? ""}</td>
+      <td class="center" style="${cellStyle};text-align:center">${slotOutside(b) ?? ""}</td>
+      <td style="${cellStyle}">${esc(slotCombined(b) || "")}</td>
     </tr>`).join("");
   const emptyRow = rows.length === 0
     ? `<tr><td colspan="10" class="center italic" style="${cellStyle};padding:24px;text-align:center;color:#888">Không có đơn hàng nào</td></tr>`
@@ -3440,8 +3521,8 @@ const handleToggleLocation = async (billId, newLoc) => {
 };
 
 // 5b. Cập nhật số kiện trong/ngoài (Màn hình 8)
-// Rule: chỉ nhân viên cùng branch với bill mới được update. Boss + admin/member khác branch → deny.
-const handleUpdateLocationCounts = async (billId, field, value) => {
+// Rule: chỉ nhân viên cùng branch với bill mới được update. slot = 'outbound'|'return' (chuyến đi/về).
+const handleUpdateLocationCounts = async (billId, field, value, slot = 'outbound') => {
   // Nếu rỗng thì set null, không thì parse thành số
   const numValue = value === '' ? null : parseInt(value);
   if (numValue !== null && numValue < 0) return;
@@ -3454,30 +3535,35 @@ const handleUpdateLocationCounts = async (billId, field, value) => {
     showToast('Boss chỉ được xem, không được cập nhật.', 'error');
     return;
   }
-  // Branch check: chi nhánh đang giữ hàng (current_branch cho đơn hoàn hàng, else gốc) mới update kho được.
-  const effBranchCode = bill.current_branch?.branch_code || bill.branch?.branch_code;
+  const isReturn = slot === 'return';
+  // Branch check theo slot: chuyến đi = chi nhánh gốc; chuyến về = chi nhánh chở về.
+  const effBranchCode = isReturn ? bill.current_branch?.branch_code : bill.branch?.branch_code;
   if (effBranchCode !== session?.branch_code) {
     showToast(`Chỉ nhân viên chi nhánh ${effBranchCode} mới được cập nhật kho này!`, 'error');
     return;
   }
   // Rule: qua ngày lịch thì khóa danh sách bốc xếp của ngày cũ. sys_admin bypass.
-  if (userRole !== 'sys_admin' && (bill.business_date || '') < getVNTodayDate()) {
+  const slotDate = isReturn ? bill.return_business_date : bill.business_date;
+  if (userRole !== 'sys_admin' && (slotDate || '') < getVNTodayDate()) {
     showToast('Đã qua ngày — không sửa được danh sách bốc xếp của ngày cũ!', 'error');
     return;
   }
+  const col = isReturn ? `return_${field}` : field;
+  const insideCol = isReturn ? 'return_inside_count' : 'inside_count';
+  const outsideCol = isReturn ? 'return_outside_count' : 'outside_count';
 
   try {
     // Update state ngay để UI phản hồi nhanh
-    setBills(prev => prev.map(b => b.id === billId ? { ...b, [field]: numValue } : b));
+    setBills(prev => prev.map(b => b.id === billId ? { ...b, [col]: numValue } : b));
 
-    const newInsideCount = field === 'inside_count' ? numValue : bill.inside_count;
-    const newOutsideCount = field === 'outside_count' ? numValue : bill.outside_count;
+    const newInsideCount = field === 'inside_count' ? numValue : bill[insideCol];
+    const newOutsideCount = field === 'outside_count' ? numValue : bill[outsideCol];
     const hasValue = newInsideCount !== null || newOutsideCount !== null;
     const total = (newInsideCount ?? 0) + (newOutsideCount ?? 0);
 
     const { error } = await supabase
       .from("bills")
-      .update({ [field]: numValue })
+      .update({ [col]: numValue })
       .eq("id", billId);
 
     if (error) throw error;
@@ -3491,29 +3577,32 @@ const handleUpdateLocationCounts = async (billId, field, value) => {
 };
 
 // expand/warehouse: cột "Hàng Ghép" — nhân viên tự điền (text). Local update khi gõ, lưu DB khi blur.
-const handleCombinedGoodsSave = async (billId, value) => {
+const handleCombinedGoodsSave = async (billId, value, slot = 'outbound') => {
   const bill = bills.find(b => b.id === billId);
   if (!bill) return;
   if (session?.role === 'boss') return;
-  const effBranchCode = bill.current_branch?.branch_code || bill.branch?.branch_code;
+  const isReturn = slot === 'return';
+  const effBranchCode = isReturn ? bill.current_branch?.branch_code : bill.branch?.branch_code;
   if (effBranchCode !== session?.branch_code) {
     showToast(`Chỉ nhân viên chi nhánh ${effBranchCode} mới được cập nhật kho này!`, 'error');
     return;
   }
   // Rule: qua ngày lịch thì khóa danh sách bốc xếp của ngày cũ. sys_admin bypass.
-  if (userRole !== 'sys_admin' && (bill.business_date || '') < getVNTodayDate()) {
+  const slotDate = isReturn ? bill.return_business_date : bill.business_date;
+  if (userRole !== 'sys_admin' && (slotDate || '') < getVNTodayDate()) {
     showToast('Đã qua ngày — không sửa được danh sách bốc xếp của ngày cũ!', 'error');
     return;
   }
+  const col = isReturn ? 'return_combined_goods' : 'combined_goods';
   const clean = (value || "").trim() || null;
-  if (clean === (bill.combined_goods ?? null)) return;
+  if (clean === (bill[col] ?? null)) return;
   try {
     const { error } = await supabase
       .from("bills")
-      .update({ combined_goods: clean })
+      .update({ [col]: clean })
       .eq("id", billId);
     if (error) throw error;
-    setBills(prev => prev.map(b => b.id === billId ? { ...b, combined_goods: clean } : b));
+    setBills(prev => prev.map(b => b.id === billId ? { ...b, [col]: clean } : b));
   } catch (err) {
     showToast("Lỗi lưu hàng ghép: " + err.message, "error");
   }
@@ -3540,8 +3629,8 @@ const fetchBillById = async (id) => {
   return data || null;
 };
 
-// Quay đầu: chở hàng về người gửi, thu cước (đi + về). business_date → hôm nay;
-// current_branch_id = chi nhánh đang giữ (để vào Bốc Xếp chuyến về); giữ mã đơn.
+// Quay đầu: chở hàng về người gửi, thu cước (đi + về). GIỮ business_date gốc (sổ bốc xếp
+// ngày gửi bất biến); return_business_date = hôm nay = chuyến hoàn về ở chi nhánh chở về.
 const handleReturnBill = async () => {
   const dlg = returnDialog;
   if (!dlg?.bill) return;
@@ -3560,7 +3649,7 @@ const handleReturnBill = async () => {
       delivery_status: "returned",
       return_fee: returnFee,
       current_branch_id: session?.branch_id || bill.branch_id,
-      business_date: todayVN,
+      return_business_date: todayVN,
       return_confirmed_at: null,
       order_note: newNote,
     }).eq("id", bill.id);
@@ -3571,7 +3660,7 @@ const handleReturnBill = async () => {
       changes: {
         delivery_status: [bill.delivery_status, "returned"],
         return_fee: [bill.return_fee ?? 0, returnFee],
-        business_date: [bill.business_date, todayVN],
+        return_business_date: [null, todayVN],
       },
       note: reason,
     });
@@ -3860,10 +3949,17 @@ useEffect(() => {
   }
 }, [revenueFilterType, revenueMonth]);
 
-const handleAddExpense = async (e) => {
-  e.preventDefault();
-  if (!expAmount || !expNote) return;
-  if (!expCategoryId) { showToast("Vui lòng chọn danh mục chi phí!", "error"); return; }
+// Đổi ngày / tháng / tab thời gian / chi nhánh → xoá các dòng phiếu chi đang nhập,
+// tránh submit nhầm sang ngày/tháng khác với lúc gõ.
+useEffect(() => {
+  setExpRows(Array.from({ length: 5 }, () => ({ amount: "", categoryId: "", note: "" })));
+}, [revenueDate, revenueMonth, revenueFilterType, revenueTab]);
+
+const updateExpRow = (idx, field, value) => setExpRows(rows => rows.map((r, i) => i === idx ? { ...r, [field]: value } : r));
+const addExpRow = () => setExpRows(rows => [...rows, { amount: "", categoryId: "", note: "" }]);
+const removeExpRow = (idx) => setExpRows(rows => rows.length > 1 ? rows.filter((_, i) => i !== idx) : rows);
+
+const handleAddExpense = async () => {
   if (!(await requireSysAdminUnlock())) return;
 
   // Revamp §19.6: chỉ admin/sys_admin (và của đúng chi nhánh mình) được tạo chi phí.
@@ -3883,54 +3979,60 @@ const handleAddExpense = async (e) => {
     return;
   }
 
+  // Dòng "có nhập" = có số tiền hoặc danh mục hoặc lý do. Dòng trống → bỏ qua.
+  const active = expRows
+    .map((r, i) => ({ ...r, _idx: i }))
+    .filter(r => String(r.amount).trim() || r.categoryId || r.note.trim());
+  if (active.length === 0) { showToast("Chưa nhập dòng chi nào!", "error"); return; }
+  // Validate: mỗi dòng có nhập phải đủ số tiền (>0) + danh mục.
+  for (const r of active) {
+    if (!r.amount || Number(r.amount) <= 0) { showToast(`Dòng ${r._idx + 1}: thiếu số tiền.`, "error"); return; }
+    if (!r.categoryId) { showToast(`Dòng ${r._idx + 1}: thiếu danh mục.`, "error"); return; }
+  }
+
   // expand-revenue-reporting: phiếu chi NGÀY lưu đúng ngày đang xem.
-  //  - admin/boss: chỉ hôm nay. sys_admin: backdate được (set created_at = trưa VN của ngày đó).
   const todayISO = getVNTodayDate();
   const targetDay = (!isMonth && session.role === "sys_admin") ? revenueDate : todayISO;
   if (!isMonth && session.role !== "sys_admin" && revenueDate !== todayISO) {
     showToast("Chỉ thêm phiếu chi cho hôm nay. Ngày quá khứ cần sys_admin.", "error");
     return;
   }
-  // created_at override chỉ khi phiếu chi ngày & ngày khác hôm nay (giữ timestamp thật cho hôm nay)
   const dayCreatedAt = (!isMonth && targetDay !== todayISO)
     ? new Date(`${targetDay}T12:00:00+07:00`).toISOString()
     : null;
 
   try {
-    // Revamp §6.3: dùng session.branch_id trực tiếp (đã có sẵn từ login), không cần query branches
-    const { data: newExp, error } = await supabase.from("expenses").insert({
-      amount: Number(expAmount),
-      note: expNote,
+    const payload = active.map(r => ({
+      amount: Number(r.amount),
+      note: r.note.trim(), // cột note NOT NULL → dùng "" khi trống (lý do optional)
       branch_id: session.branch_id,
       created_by: session.id,
-      category_id: expCategoryId,
+      category_id: r.categoryId,
       period_type: expPeriodType,
       period_month: isMonth ? `${expPeriodMonth}-01` : null,
       ...(dayCreatedAt ? { created_at: dayCreatedAt } : {}),
-    }).select("id").single();
-
+    }));
+    const { data: inserted, error } = await supabase.from("expenses").insert(payload).select("id");
     if (error) throw error;
 
-    showToast("Đã ghi nhận phiếu chi thành công!");
-    const catName = expenseCategories.find(c => c.id === expCategoryId)?.name || "";
-    // §4.5: log expense_create
-    logAudit({
-      entityType: "expense",
-      entityId: newExp?.id || null,
-      entityLabel: `${auditFormatVnd(expAmount)} - ${expNote}`,
-      action: "expense_create",
-      changes: {
-        amount: [null, Number(expAmount)],
-        note: [null, expNote],
-        category: [null, catName],
-        period: [null, isMonth ? `tháng ${expPeriodMonth}` : `ngày ${targetDay.split("-").reverse().join("-")}`],
-      },
-      note: (dayCreatedAt ? "Backdate ngày quá khứ" : undefined),
+    showToast(`Đã ghi ${active.length} phiếu chi!`);
+    active.forEach((r, i) => {
+      const catName = expenseCategories.find(c => c.id === r.categoryId)?.name || "";
+      logAudit({
+        entityType: "expense",
+        entityId: inserted?.[i]?.id || null,
+        entityLabel: `${auditFormatVnd(r.amount)} - ${r.note.trim() || catName}`,
+        action: "expense_create",
+        changes: {
+          amount: [null, Number(r.amount)],
+          note: [null, r.note.trim() || null],
+          category: [null, catName],
+          period: [null, isMonth ? `tháng ${expPeriodMonth}` : `ngày ${targetDay.split("-").reverse().join("-")}`],
+        },
+        note: (dayCreatedAt ? "Backdate ngày quá khứ" : undefined),
+      });
     });
-    setExpAmount("");
-    setExpNote("");
-    setExpCategoryId("");
-    setExpPeriodType("day");
+    setExpRows(makeBlankExpRows());
     setExpenseHistoryRefreshKey(k => k + 1);
     fetchData();
   } catch (err) {
@@ -4297,23 +4399,30 @@ useEffect(() => {
 
 // --- Danh Sách Bốc Xếp: đơn của chi nhánh + ngày đang chọn (không tính draft/cancelled) ---
 // add-return-and-destroy-flow: dùng chi nhánh HIỆU LỰC = current_branch_id (chuyến về) nếu có, else branch gốc.
+// A+: Danh sách bốc xếp theo ngày là SỔ LỊCH SỬ, mỗi đơn có tối đa 2 lần xuất hiện —
+// "outbound" (chuyến đi: chi nhánh gốc + ngày gửi gốc) và "return" (chuyến hoàn về: chi nhánh
+// chở về + ngày hoàn). Mỗi slot dùng bộ số kiện riêng. Không xoá đơn tiêu hủy khỏi ngày gốc.
 const warehouseFilteredBills = useMemo(() => {
-  return bills.filter(b =>
-    (b.current_branch?.branch_code || b.branch?.branch_code) === warehouseBranch &&
-    b.delivery_status !== 'draft' &&
-    b.delivery_status !== 'cancelled' &&
-    b.delivery_status !== 'destroyed' &&
-    b.business_date === warehouseDate
+  const T = warehouseBranch, D = warehouseDate;
+  const out = [];
+  for (const b of bills) {
+    if (!b || b.delivery_status === 'draft' || b.delivery_status === 'cancelled') continue;
+    if (b.branch?.branch_code === T && b.business_date === D) { out.push({ ...b, _slot: 'outbound' }); continue; }
+    if (b.delivery_status === 'returned' && b.current_branch?.branch_code === T && b.return_business_date === D) { out.push({ ...b, _slot: 'return' }); }
+  }
   // Sắp theo mã đơn tăng dần (seq ở 2 ký tự đầu → string sort đúng thứ tự).
-  ).sort((a, b) => (a.bill_code || "zzzz").localeCompare(b.bill_code || "zzzz"));
+  return out.sort((a, b) => (a.bill_code || "zzzz").localeCompare(b.bill_code || "zzzz"));
 }, [bills, warehouseBranch, warehouseDate]);
+
+// Lấy số kiện theo slot (chuyến về dùng cột return_*).
+const whSlotVal = (b, field) => (b._slot === 'return' ? b[`return_${field}`] : b[field]);
 
 // Summary đầu trang: tổng số kiện / tổng kiện Trong / tổng kiện Ngoài của toàn bộ đơn (không chỉ trang hiện tại).
 const warehouseSummary = useMemo(() => {
   return warehouseFilteredBills.reduce((acc, b) => {
     acc.totalPackages += Number(b.package_count || 0);
-    acc.totalInside += Number(b.inside_count || 0);
-    acc.totalOutside += Number(b.outside_count || 0);
+    acc.totalInside += Number(whSlotVal(b, 'inside_count') || 0);
+    acc.totalOutside += Number(whSlotVal(b, 'outside_count') || 0);
     return acc;
   }, { totalPackages: 0, totalInside: 0, totalOutside: 0 });
 }, [warehouseFilteredBills]);
@@ -4357,14 +4466,27 @@ const filteredBills = useMemo(() => {
     }
     return true;
   });
-  // add-server-session §10: Sort chính theo business_date desc, phụ theo created_at desc.
+  // Sắp xếp theo cột user chọn (click header). Null delivery_date luôn xuống cuối.
+  const dir = allBillsSort.dir === "asc" ? 1 : -1;
   list.sort((a, b) => {
-    const bd = (b.business_date || "").localeCompare(a.business_date || "");
-    if (bd !== 0) return bd;
-    return (b.created_at || "").localeCompare(a.created_at || "");
+    const key = allBillsSort.key;
+    if (key === "business_date") {
+      const av = `${a.business_date || ""} ${a.created_at || ""}`;
+      const bv = `${b.business_date || ""} ${b.created_at || ""}`;
+      return dir * av.localeCompare(bv);
+    }
+    if (key === "delivery_date") {
+      const an = !a.delivery_date, bn = !b.delivery_date;
+      if (an && bn) return 0;
+      if (an) return 1;
+      if (bn) return -1;
+      return dir * String(a.delivery_date).localeCompare(String(b.delivery_date));
+    }
+    // bill_code (mặc định)
+    return dir * (a.bill_code || "").localeCompare(b.bill_code || "");
   });
   return list;
-}, [bills, allBillsFilter, allBillsTab]);
+}, [bills, allBillsFilter, allBillsTab, allBillsSort]);
 
 const billsCountByBranch = useMemo(() => {
   const c = { SG: 0, GL: 0 };
@@ -4411,6 +4533,13 @@ const toggleDebtExpanded = (key) => {
 
 useEffect(() => { setAllBillsPage(1); }, [allBillsFilter, allBillsTab]);
 useEffect(() => { setWarehousePage(1); }, [warehouseBranch, warehouseDate]);
+
+// Click header Tổng Hợp: lần 1 cột mới → tăng dần (nhỏ→lớn); click lại → giảm dần.
+const toggleBillsSort = (key) => {
+  setAllBillsSort(s => s.key === key ? { key, dir: s.dir === "asc" ? "desc" : "asc" } : { key, dir: "asc" });
+  setAllBillsPage(1);
+};
+const billsSortArrow = (key) => allBillsSort.key === key ? (allBillsSort.dir === "asc" ? " ▲" : " ▼") : "";
 
 // Guard: member vào screen 'debt' qua state cũ → redirect + toast
 useEffect(() => {
@@ -5238,7 +5367,7 @@ return (
                 required
               >
                 <option value="">— Chọn danh mục —</option>
-                {expenseCategories.filter(c => c.is_active !== false || c.id === editingExpense.category_id).map(c => (
+                {expenseCategories.filter(c => c.id === editingExpense.category_id || (c.is_active !== false && (c.period_type || 'day') === (editingExpense.period_type || 'day'))).map(c => (
                   <option key={c.id} value={c.id}>{c.name}</option>
                 ))}
               </select>
@@ -5446,7 +5575,7 @@ return (
 
         <button
           type="button"
-          onClick={handleLogout}
+          onClick={() => handleLogout()}
           className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-2 rounded-lg text-xs transition"
         >
           🚪 Đăng Xuất
@@ -6608,10 +6737,10 @@ return (
                   <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                     <div className={noDeclaredValue ? "md:col-span-3" : "md:col-span-2"}>
                       <label className={`${ui.label} block mb-1`}>Mặt hàng gửi *</label>
-                      <textarea
+                      <GoodsTypeInput
                         value={goodsType}
-                        onChange={(e) => setGoodsType(e.target.value)}
-                        placeholder={"Mặt hàng..."}
+                        onChange={setGoodsType}
+                        placeholder={"Mặt hàng... (gõ 1 ký tự để gợi ý)"}
                         rows={3}
                         className="w-full border rounded px-3 py-1.5 text-sm resize-y leading-relaxed whitespace-pre-wrap"
                       />
@@ -7061,6 +7190,8 @@ return (
                     </button>
                   );
                 })()}
+                {/* Ẩn nút In Danh Sách theo yêu cầu (chưa dùng) — giữ code để bật lại sau */}
+                {false && (
                 <button
                   type="button"
                   onClick={handlePrintWarehouseList}
@@ -7069,6 +7200,7 @@ return (
                 >
                   🖨️ In Danh Sách
                 </button>
+                )}
                 <span className="w-px h-5 bg-gray-300 mx-1 hidden md:block" />
                 <label className="text-xs font-bold text-gray-600">📅 Ngày:</label>
                 <button
@@ -7109,8 +7241,14 @@ return (
                 { code: "SG", label: "Sài Gòn" },
                 { code: "GL", label: "Gia Lai" }
               ].map(b => {
-                // add-server-session §7: filter theo business_date (ngày kinh doanh) thay vì created_at (real timestamp).
-                const count = bills.filter(x => (x.current_branch?.branch_code || x.branch?.branch_code) === b.code && x.delivery_status !== 'draft' && x.delivery_status !== 'cancelled' && x.delivery_status !== 'destroyed' && x.business_date === warehouseDate).length;
+                // add-server-session §7: đếm theo business_date. A+: mỗi đơn tính 2 slot — chuyến đi
+                // (chi nhánh gốc + ngày gửi) + chuyến hoàn về (chi nhánh chở về + ngày hoàn). Giữ đơn tiêu hủy.
+                const count = bills.reduce((n, x) => {
+                  if (!x || x.delivery_status === 'draft' || x.delivery_status === 'cancelled') return n;
+                  if (x.branch?.branch_code === b.code && x.business_date === warehouseDate) n++;
+                  if (x.delivery_status === 'returned' && x.current_branch?.branch_code === b.code && x.return_business_date === warehouseDate) n++;
+                  return n;
+                }, 0);
                 const active = warehouseBranch === b.code;
                 return (
                   <button
@@ -7119,7 +7257,7 @@ return (
                     onClick={() => setWarehouseBranch(b.code)}
                     className={`px-4 py-2 border-b-2 transition ${active ? "border-orange-500 text-orange-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
                   >
-                    {b.label} <span className={`ml-1 text-[10px] px-1.5 py-0.5 rounded-full ${active ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
+                    {b.label} <span className={`ml-1 text-[11px] px-1.5 py-0.5 rounded-full ${active ? "bg-orange-100 text-orange-700" : "bg-gray-100 text-gray-500"}`}>{count}</span>
                   </button>
                 );
               })}
@@ -7141,6 +7279,10 @@ return (
               </div>
             </div>
 
+            <div className="md:hidden landscape:hidden bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded px-3 py-2">
+              💡 Xoay ngang điện thoại để xem bảng dễ hơn. Chạm 1 dòng để chọn, chạm 2 lần (double-click) để mở chi tiết.
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
@@ -7152,7 +7294,7 @@ return (
                     <th className="py-3 px-4">Mặt hàng</th>
                     <th className="py-3 px-4">Số kiện</th>
                     <th className="py-3 px-4">Giá cước</th>
-                    <th className="py-3 px-4 text-center">Giao tận nơi</th>
+                    <th className="py-3 px-4">Địa chỉ giao</th>
                     <th className="py-3 px-4 text-center">Trong</th>
                     <th className="py-3 px-4 text-center">Ngoài</th>
                     <th className="py-3 px-4 text-center">Hàng Ghép</th>
@@ -7171,37 +7313,53 @@ return (
                     const pageStart = (safePage - 1) * WAREHOUSE_PER_PAGE;
                     const pageItems = filtered.slice(pageStart, pageStart + WAREHOUSE_PER_PAGE);
                     return pageItems.map((bill) => {
-                      const insideCount = bill.inside_count ?? null;
-                      const outsideCount = bill.outside_count ?? null;
+                      const slot = bill._slot;
+                      const isReturnSlot = slot === 'return';
+                      const insideCount = whSlotVal(bill, 'inside_count') ?? null;
+                      const outsideCount = whSlotVal(bill, 'outside_count') ?? null;
                       const total = (insideCount ?? 0) + (outsideCount ?? 0);
-                      // Rule: danh sách bốc xếp của ngày nào chỉ sửa được đúng ngày lịch đó; qua ngày (business_date < hôm nay) → khóa. sys_admin bypass.
-                      const warehouseDayOpen = userRole === 'sys_admin' || (bill.business_date || '') >= getVNTodayDate();
-                      // Chi nhánh đang giữ hàng (current_branch cho đơn hoàn hàng, else gốc) mới được xếp Trong/Ngoài/Hàng ghép.
-                      const effBranchCode = bill.current_branch?.branch_code || bill.branch?.branch_code;
+                      const slotDate = isReturnSlot ? bill.return_business_date : bill.business_date;
+                      // Rule: danh sách bốc xếp của ngày nào chỉ sửa được đúng ngày lịch đó; qua ngày → khóa. sys_admin bypass.
+                      const warehouseDayOpen = userRole === 'sys_admin' || (slotDate || '') >= getVNTodayDate();
+                      // Chuyến đi = chi nhánh gốc; chuyến hoàn về = chi nhánh chở về.
+                      const effBranchCode = isReturnSlot ? bill.current_branch?.branch_code : bill.branch?.branch_code;
                       const canEditWarehouse = session?.role !== 'boss' && effBranchCode === session?.branch_code && warehouseDayOpen;
                       // Chỉ validate nếu đã nhập ít nhất 1 trong 2 giá trị
                       const hasValue = insideCount !== null || outsideCount !== null;
                       const isValid = !hasValue || total === bill.package_count;
+                      const rowKey = bill.id + '_' + slot;
+                      const openDetail = () => { setPreviousTab("warehouse"); setSelectedBill(bill); setCurrentScreen("bills"); setActiveSubTab("create"); };
                       
                       return (
-                    <tr key={bill.id} className="transition-colors hover:bg-gray-50">
+                    <tr
+                      key={rowKey}
+                      onClick={() => setSelectedRowKey(rowKey)}
+                      onDoubleClick={openDetail}
+                      style={{ touchAction: 'manipulation' }}
+                      className={`transition-colors cursor-pointer ${selectedRowKey === rowKey ? 'bg-orange-100 ring-2 ring-inset ring-orange-400' : 'hover:bg-gray-50'}`}
+                    >
                       <td className="py-4 px-4">
                         <button
                           type="button"
-                          onClick={() => { setPreviousTab("warehouse"); setSelectedBill(bill); setCurrentScreen("bills"); setActiveSubTab("create"); }}
+                          onClick={(e) => { e.stopPropagation(); openDetail(); }}
                           className="font-mono font-bold text-orange-600 hover:underline"
                           title="Xem chi tiết đơn hàng"
                         >
                           {bill.bill_code || <span className="text-gray-400 italic">(Nháp)</span>}
                         </button>
+                        {isReturnSlot && <span className="block text-[11px] font-bold text-rose-600">↩ Hoàn về</span>}
                       </td>
                       <td className="py-4 px-4">
                         {bill.special_stars === 2 && <span className="text-red-600 font-bold text-base">⭐⭐</span>}
                         {bill.special_stars === 1 && <span className="text-red-600 font-bold text-base">⭐</span>}
                       </td>
-                      <td className="py-4 px-4 text-gray-700 font-medium">{bill.sender_name_text || "—"}</td>
+                      <td className="py-4 px-4 text-gray-700 font-medium">
+                        {bill.sender_name_text || "—"}
+                        {bill.sender_phone_text && <span className="block text-[13px] font-semibold text-gray-600 font-mono tracking-wide">📞 {formatPhone(bill.sender_phone_text)}</span>}
+                      </td>
                       <td className="py-4 px-4 text-gray-700 font-medium">
                         {bill.receiver_name_text || "—"}
+                        {bill.receiver_phone_text && <span className="block text-[13px] font-semibold text-gray-600 font-mono tracking-wide">📞 {formatPhone(bill.receiver_phone_text)}</span>}
                       </td>
                       <td className="py-4 px-4 font-medium">{bill.goods_type}</td>
                       <td className="py-4 px-4 text-center">
@@ -7212,11 +7370,11 @@ return (
                         : bill.payment_status === "quote_later" ? <span className="text-amber-600">Chưa có cước</span>
                         : formatVND(bill.shipping_fee)
                       }</td>
-                      <td className="py-4 px-4 text-center">
+                      <td className="py-4 px-4 text-left">
                         {bill.is_home_delivery ? (
-                          <HoverTooltip label={bill.delivery_address ? `Địa chỉ giao: ${bill.delivery_address}` : "Chưa có địa chỉ giao"}>
-                            <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded font-bold">Có</span>
-                          </HoverTooltip>
+                          <span className="text-[13px] text-blue-700 font-medium break-words">
+                            {bill.delivery_address || <span className="text-amber-600 italic">Chưa có địa chỉ giao</span>}
+                          </span>
                         ) : (
                           <span className="text-gray-400">—</span>
                         )}
@@ -7227,7 +7385,9 @@ return (
                           min="0"
                           max={bill.package_count}
                           value={insideCount ?? ''}
-                          onChange={(e) => handleUpdateLocationCounts(bill.id, 'inside_count', e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          onChange={(e) => handleUpdateLocationCounts(bill.id, 'inside_count', e.target.value, slot)}
                           placeholder="0"
                           disabled={!canEditWarehouse}
                           className={`w-16 px-2 py-1 text-center text-sm border-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed ${
@@ -7235,7 +7395,7 @@ return (
                               ? 'border-gray-300 bg-white' 
                               : 'border-red-500 bg-red-50'
                           }`}
-                          title={!canEditWarehouse ? `Chỉ nhân viên ${bill.branch?.branch_code} mới cập nhật được kho này` : (isValid ? '' : `Tổng phải = ${bill.package_count} kiện`)}
+                          title={!canEditWarehouse ? `Chỉ nhân viên ${effBranchCode} mới cập nhật được kho này` : (isValid ? '' : `Tổng phải = ${bill.package_count} kiện`)}
                         />
                       </td>
                       <td className="py-4 px-4 text-center">
@@ -7244,7 +7404,9 @@ return (
                           min="0"
                           max={bill.package_count}
                           value={outsideCount ?? ''}
-                          onChange={(e) => handleUpdateLocationCounts(bill.id, 'outside_count', e.target.value)}
+                          onClick={(e) => e.stopPropagation()}
+                          onDoubleClick={(e) => e.stopPropagation()}
+                          onChange={(e) => handleUpdateLocationCounts(bill.id, 'outside_count', e.target.value, slot)}
                           placeholder="0"
                           disabled={!canEditWarehouse}
                           className={`w-16 px-2 py-1 text-center text-sm border-2 rounded focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-100 disabled:cursor-not-allowed ${
@@ -7252,15 +7414,15 @@ return (
                               ? 'border-gray-300 bg-white' 
                               : 'border-red-500 bg-red-50'
                           }`}
-                          title={!canEditWarehouse ? `Chỉ nhân viên ${bill.branch?.branch_code} mới cập nhật được kho này` : (isValid ? '' : `Tổng phải = ${bill.package_count} kiện`)}
+                          title={!canEditWarehouse ? `Chỉ nhân viên ${effBranchCode} mới cập nhật được kho này` : (isValid ? '' : `Tổng phải = ${bill.package_count} kiện`)}
                         />
                       </td>
-                      <td className="py-4 px-2 text-center">
+                      <td className="py-4 px-2 text-center" onClick={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
                         <CombinedGoodsInput
-                          value={bill.combined_goods ?? ''}
+                          value={(isReturnSlot ? bill.return_combined_goods : bill.combined_goods) ?? ''}
                           disabled={!canEditWarehouse}
-                          onSave={(val) => handleCombinedGoodsSave(bill.id, val)}
-                          title={!canEditWarehouse ? `Chỉ nhân viên ${bill.branch?.branch_code} mới cập nhật được kho này` : ''}
+                          onSave={(val) => handleCombinedGoodsSave(bill.id, val, slot)}
+                          title={!canEditWarehouse ? `Chỉ nhân viên ${effBranchCode} mới cập nhật được kho này` : ''}
                         />
                       </td>
                     </tr>
@@ -7427,17 +7589,21 @@ return (
               </div>
             </div>
 
+            <div className="md:hidden landscape:hidden bg-amber-50 border border-amber-200 text-amber-800 text-[11px] rounded px-3 py-2">
+              💡 Xoay ngang điện thoại để xem bảng dễ hơn. Chạm 1 dòng để chọn, chạm 2 lần (double-click) để mở chi tiết.
+            </div>
+
             <div className="overflow-x-auto">
               <table className="w-full text-left">
                 <thead>
                   <tr className="bg-gray-50 text-xs text-gray-500 uppercase border-b font-bold">
-                    <th className="py-3 px-4">Mã Đơn Hàng</th>
+                    <th className="py-3 px-4 cursor-pointer select-none hover:text-orange-600" onClick={() => toggleBillsSort("bill_code")}>Mã Đơn Hàng{billsSortArrow("bill_code")}</th>
                     <th className="py-3 px-4">Người Gửi</th>
                     <th className="py-3 px-4">Người Nhận</th>
                     <th className="py-3 px-4">Giá Cước</th>
                     <th className="py-3 px-4">Số Tiền Thu</th>
-                    <th className="py-3 px-4">Ngày Gửi</th>
-                    <th className="py-3 px-4">Ngày Giao</th>
+                    <th className="py-3 px-4 cursor-pointer select-none hover:text-orange-600" onClick={() => toggleBillsSort("business_date")}>Ngày Gửi{billsSortArrow("business_date")}</th>
+                    <th className="py-3 px-4 cursor-pointer select-none hover:text-orange-600" onClick={() => toggleBillsSort("delivery_date")}>Ngày Giao{billsSortArrow("delivery_date")}</th>
                     <th className="py-3 px-4">Giao Hàng</th>
                     <th className="py-3 px-4">Thanh Toán</th>
                   </tr>
@@ -7452,7 +7618,8 @@ return (
                   ) : pagedBills.map((bill) => (
                     <tr
                       key={bill.id}
-                      onClick={() => {
+                      onClick={() => setSelectedRowKey(bill.id)}
+                      onDoubleClick={() => {
                         if (bill.delivery_status === 'draft') {
                           // Nháp chỉ được sửa/hủy/hoàn tất bởi đúng chi nhánh đã tạo — sys_admin bypass.
                           if (userRole !== 'sys_admin' && bill.branch?.branch_code !== session?.branch_code) {
@@ -7507,13 +7674,14 @@ return (
                           setActiveSubTab("create");
                         }
                       }}
-                      className="hover:bg-gray-50/40 transition cursor-pointer"
+                      className={`transition cursor-pointer ${selectedRowKey === bill.id ? 'bg-orange-100 ring-2 ring-inset ring-orange-400' : 'hover:bg-gray-50/40'}`}
+                      style={{ touchAction: 'manipulation' }}
                       title={
                         bill.delivery_status === 'draft'
                           ? (userRole !== 'sys_admin' && bill.branch?.branch_code !== session?.branch_code
                               ? `Chỉ nhân viên chi nhánh ${bill.branch?.branch_code || '?'} mới được thao tác nháp này`
-                              : 'Click để chỉnh sửa nháp')
-                          : 'Xem chi tiết đơn hàng'
+                              : 'Chạm để chọn · double-click để mở/sửa nháp')
+                          : 'Chạm để chọn · double-click để xem chi tiết'
                       }
                     >
                       <td className="py-3.5 px-4 font-mono font-bold text-orange-600 hover:underline">
@@ -7533,10 +7701,16 @@ return (
                           ? <span className="text-gray-400 font-normal">—</span>
                           : formatVND(bill.actual_amount_paid)
                       }</td>
-                      <td className="py-3.5 px-4 text-xs font-medium text-gray-700">{bill.business_date ? bill.business_date : "Chưa có"}</td>
-                      <td className="py-3.5 px-4 text-xs font-medium text-gray-700">{bill.delivery_date ? toVNDate(bill.delivery_date) : "—"}</td>
+                      <td className="py-3.5 px-4 text-xs font-medium text-gray-700">
+                        {bill.business_date ? formatDMY(bill.business_date) : "Chưa có"}
+                        {bill.created_at && <span className="block text-[11px] text-gray-400 font-mono">{formatHMS(bill.created_at)}</span>}
+                      </td>
+                      <td className="py-3.5 px-4 text-xs font-medium text-gray-700">
+                        {bill.delivery_date ? formatDMY(toVNDate(bill.delivery_date)) : "—"}
+                        {bill.delivery_date && <span className="block text-[11px] text-gray-400 font-mono">{formatHMS(bill.delivery_date)}</span>}
+                      </td>
                       <td className="py-3.5 px-4">
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${
                           bill.delivery_status === 'delivered' ? 'bg-blue-100 text-blue-800' : 
                           bill.delivery_status === 'draft' ? 'bg-gray-100 text-gray-700' : 
                           bill.delivery_status === 'cancelled' ? 'bg-red-100 text-red-700' :
@@ -7548,7 +7722,7 @@ return (
                         </span>
                       </td>
                       <td className="py-3.5 px-4">
-                        <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${(bill.payment_status === 'paid' || bill.payment_status === 'free') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{(bill.payment_status === 'paid' || bill.payment_status === 'free') ? 'Đã thanh toán' : 'Chưa thanh toán'}</span>
+                        <span className={`text-xs font-bold px-2 py-0.5 rounded-full ${(bill.payment_status === 'paid' || bill.payment_status === 'free') ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>{(bill.payment_status === 'paid' || bill.payment_status === 'free') ? 'Đã thanh toán' : 'Chưa thanh toán'}</span>
                       </td>
                     </tr>
                   ))}
@@ -7849,82 +8023,133 @@ return (
                 {/* Revamp §19.3-19.4: form thêm phiếu chi chỉ hiển thị cho admin/sys_admin của đúng chi nhánh đang xem.
                     Boss (chỉ đọc) + admin xem chi nhánh khác + member → ẩn hoàn toàn. */}
                 {(session?.role === "admin" || session?.role === "sys_admin") && session.branch_code === revenueTab && revenueFilterType !== "year" ? (
-                  (revenueFilterType === "month" && session?.role !== "sys_admin" && isMonthLocked(revenueTab, revenueMonth)) ? (
-                    <p className="text-sm font-semibold text-red-600 border-l-4 border-red-400 pl-2">
-                      🔒 Tháng {formatMonthDisplay(revenueMonth, "-")} đã khóa sổ.
+                  // Chống nhập nhầm kỳ: non-sys_admin chỉ nhập cho HÔM NAY / THÁNG HIỆN TẠI; sys_admin
+                  // backdate được (ẩn form theo lock tháng như cũ). Trả về lý do chặn hoặc null.
+                  (() => {
+                    const todayISO = getVNTodayDate();
+                    const curMonth = todayISO.slice(0, 7);
+                    const isSys = session?.role === "sys_admin";
+                    if (!isSys && revenueFilterType === "day" && revenueDate !== todayISO) return "day";
+                    if (!isSys && revenueFilterType === "month" && revenueMonth !== curMonth) return "monthOther";
+                    if (revenueFilterType === "month" && !isSys && isMonthLocked(revenueTab, revenueMonth)) return "locked";
+                    return null;
+                  })() ? (
+                    <p className="text-sm font-semibold text-gray-500 border-l-4 border-gray-300 pl-2">
+                      {revenueFilterType === "day" ? (
+                        <>📅 Chỉ nhập phiếu chi cho <b>hôm nay</b> ({formatDMY(getVNTodayDate())}). Ngày quá khứ / tương lai không nhập được.</>
+                      ) : isMonthLocked(revenueTab, revenueMonth) ? (
+                        <>🔒 Tháng {formatMonthDisplay(revenueMonth, "-")} đã khóa sổ.</>
+                      ) : (
+                        <>🗓️ Chỉ nhập phiếu chi cho <b>tháng hiện tại</b>. Tháng trước / sau không nhập được.</>
+                      )}
                     </p>
                   ) : (
                   <>
                 <h3 className="font-bold text-sm text-red-700 border-l-4 border-red-500 pl-2">💸 Thêm Phiếu Chi Tiêu — Chi nhánh {branchFullName(revenueTab)}</h3>
-                <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleAddExpense(e)); }} className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-                  <div className="md:col-span-3">
-                    <label className="block text-xs text-gray-500 mb-1">Số tiền chi (VND)</label>
-                    <MoneyInput
-                      placeholder="Số tiền..."
-                      value={expAmount}
-                      onChange={setExpAmount}
-                      className="w-full border rounded px-3 py-1.5 text-sm"
-                      required
-                    />
-                  </div>
-                  <div className="md:col-span-3">
-                    <label className="block text-xs text-gray-500 mb-1">Danh mục</label>
-                    <select
-                      value={expCategoryId}
-                      onChange={(e) => setExpCategoryId(e.target.value)}
-                      className="w-full border rounded px-3 py-1.5 text-sm bg-white"
-                      required
-                    >
-                      <option value="">— Chọn danh mục —</option>
-                      {expenseCategories.filter(c => c.is_active !== false).map(c => (
-                        <option key={c.id} value={c.id}>{c.name}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="md:col-span-3">
-                    <label className="block text-xs text-gray-500 mb-1">Loại kỳ</label>
-                    <select
-                      value={expPeriodType}
-                      disabled
-                      title="Loại kỳ bám theo tab đang xem (Ngày/Tháng)"
-                      className="w-full border rounded px-3 py-1.5 text-sm bg-gray-100 text-gray-600 cursor-not-allowed"
-                    >
-                      <option value="day">Theo ngày</option>
-                      <option value="month">Theo tháng</option>
-                    </select>
-                  </div>
-                  {expPeriodType === "month" && (
-                    <div className="md:col-span-3">
-                      <label className="block text-xs text-gray-500 mb-1">Tháng áp dụng</label>
-                      <VNMonthInput
-                        value={expPeriodMonth}
-                        onChange={(e) => setExpPeriodMonth(e.target.value)}
-                        className="w-full border rounded px-3 py-1.5 text-sm bg-white"
-                      />
+                <form onSubmit={(e) => { e.preventDefault(); runExclusive(() => handleAddExpense()); }} className="space-y-3">
+                  {/* Loại kỳ ở trên cùng (bám theo tab Ngày/Tháng đang xem) */}
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="w-40">
+                      <label className="block text-xs text-gray-500 mb-1">Loại kỳ</label>
+                      <select
+                        value={expPeriodType}
+                        disabled
+                        title="Loại kỳ bám theo tab đang xem (Ngày/Tháng)"
+                        className="w-full border rounded px-3 py-1.5 text-sm bg-gray-100 text-gray-600 cursor-not-allowed"
+                      >
+                        <option value="day">Theo ngày</option>
+                        <option value="month">Theo tháng</option>
+                      </select>
                     </div>
-                  )}
-                  <div className={expPeriodType === "month" ? "md:col-span-9" : "md:col-span-10"}>
-                    <label className="block text-xs text-gray-500 mb-1">Lý do chi chi tiết</label>
-                    <input
-                      type="text"
-                      placeholder="Lý do..."
-                      value={expNote}
-                      onChange={(e) => setExpNote(e.target.value)}
-                      className="w-full border rounded px-3 py-1.5 text-sm"
-                      required
-                    />
+                    {expPeriodType === "day" && (
+                      <div className="w-48">
+                        <label className="block text-xs text-gray-500 mb-1">Ngày áp dụng</label>
+                        <div
+                          title="Ghi cho đúng ngày đang xem — đổi ngày ở thanh 'Chọn ngày' phía trên"
+                          className="w-full border rounded px-3 py-1.5 text-sm bg-gray-100 text-gray-600"
+                        >
+                          {formatDMY(revenueDate)}
+                        </div>
+                      </div>
+                    )}
+                    {expPeriodType === "month" && (
+                      <div className="w-48">
+                        <label className="block text-xs text-gray-500 mb-1">Tháng áp dụng</label>
+                        <div
+                          title="Ghi cho đúng tháng đang xem — đổi tháng ở thanh 'Chọn tháng' phía trên"
+                          className="w-full border rounded px-3 py-1.5 text-sm bg-gray-100 text-gray-600"
+                        >
+                          Tháng {expPeriodMonth.slice(5, 7)}/{expPeriodMonth.slice(0, 4)}
+                        </div>
+                      </div>
+                    )}
                   </div>
-                  <div className="md:col-span-2">
+
+                  {/* Header cột (desktop) */}
+                  <div className="hidden md:grid grid-cols-12 gap-2 text-[11px] font-bold text-gray-500 uppercase px-1">
+                    <div className="col-span-3">Số tiền (VND) *</div>
+                    <div className="col-span-3">Danh mục *</div>
+                    <div className="col-span-5">Lý do chi tiết</div>
+                    <div className="col-span-1"></div>
+                  </div>
+
+                  {/* Các dòng nhập — mặc định 5 dòng, chỉ lưu dòng có nhập */}
+                  {expRows.map((row, idx) => (
+                    <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-2 items-center">
+                      <div className="md:col-span-3">
+                        <MoneyInput
+                          placeholder="Số tiền..."
+                          value={row.amount}
+                          onChange={(v) => updateExpRow(idx, "amount", v)}
+                          className="w-full border rounded px-3 py-1.5 text-sm"
+                        />
+                      </div>
+                      <div className="md:col-span-3">
+                        <select
+                          value={row.categoryId}
+                          onChange={(e) => updateExpRow(idx, "categoryId", e.target.value)}
+                          className="w-full border rounded px-3 py-1.5 text-sm bg-white"
+                        >
+                          <option value="">— Chọn danh mục —</option>
+                          {expenseCategories.filter(c => c.is_active !== false && (c.period_type || 'day') === expPeriodType).map(c => (
+                            <option key={c.id} value={c.id}>{c.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="md:col-span-5">
+                        <input
+                          type="text"
+                          placeholder="Lý do..."
+                          value={row.note}
+                          onChange={(e) => updateExpRow(idx, "note", e.target.value)}
+                          className="w-full border rounded px-3 py-1.5 text-sm"
+                        />
+                      </div>
+                      <div className="md:col-span-1 flex md:justify-center">
+                        <button
+                          type="button"
+                          onClick={() => removeExpRow(idx)}
+                          disabled={expRows.length <= 1}
+                          title="Xoá dòng"
+                          className="text-gray-400 hover:text-red-600 disabled:opacity-30 text-xl leading-none px-2"
+                        >×</button>
+                      </div>
+                    </div>
+                  ))}
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                    <button type="button" onClick={addExpRow} className="text-xs font-bold text-blue-600 hover:underline">+ Thêm dòng</button>
                     <button
                       type="submit"
                       disabled={isSubmitting}
-                      className="w-full bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-3 rounded text-sm transition disabled:opacity-60 disabled:cursor-not-allowed"
+                      className="bg-red-600 hover:bg-red-700 text-white font-bold py-1.5 px-6 rounded text-sm transition disabled:opacity-60 disabled:cursor-not-allowed"
                     >
-                      {isSubmitting ? "⏳..." : "Thêm"}
+                      {isSubmitting ? "⏳ Đang lưu..." : "💾 Lưu phiếu chi"}
                     </button>
                   </div>
+
                   {expPeriodType === "month" && session?.role !== "sys_admin" && isMonthLocked(revenueTab, expPeriodMonth) && (
-                    <p className="md:col-span-12 text-[11px] font-semibold text-red-600">
+                    <p className="text-[11px] font-semibold text-red-600">
                       ⚠️ Tháng {expPeriodMonth} đã khóa sổ — chỉ sys_admin mới nhập được.
                     </p>
                   )}

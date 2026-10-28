@@ -1,0 +1,178 @@
+<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+<meta charset="utf-8">
+<title>Hướng dẫn sử dụng — Vận Tải Hoàn Cầu</title>
+<style>
+@page Section1 { size:595.3pt 841.9pt; margin:18mm 16mm 18mm 16mm; }
+div.Section1 { page:Section1; }
+body { font-family:'Segoe UI',Arial,sans-serif; color:#222; font-size:11pt; line-height:1.5; }
+h1 { font-size:20pt; color:#c2410c; margin:0 0 4pt; }
+h2 { font-size:15pt; color:#ea580c; border-bottom:2px solid #f97316; padding-bottom:3pt; margin:20pt 0 8pt; }
+h3 { font-size:12.5pt; color:#9a3412; margin:14pt 0 4pt; }
+p { margin:4pt 0; }
+ul { margin:4pt 0 8pt 0; padding-left:22pt; }
+li { margin:3pt 0; }
+table { border-collapse:collapse; width:100%; font-size:10.5pt; margin:6pt 0; }
+th,td { border:1px solid #999; padding:5pt 7pt; vertical-align:top; text-align:left; }
+th { background:#fed7aa; font-weight:700; }
+.lead { color:#555; font-size:11pt; }
+.note { background:#fffbeb; border:1px solid #fde68a; padding:6pt 9pt; margin:6pt 0; font-size:10.5pt; }
+.rule { background:#f0fdf4; border-left:3px solid #16a34a; padding:2pt 8pt; margin:3pt 0; }
+</style>
+</head>
+<body>
+<div class="Section1">
+
+<h1>🚚 VẬN TẢI HOÀN CẦU — HƯỚNG DẪN SỬ DỤNG</h1>
+<p class="lead">Tài liệu hướng dẫn sử dụng hệ thống quản lý đơn hàng Sài Gòn – Gia Lai. Trình bày theo từng màn hình, kèm các quy tắc (rule) đang áp dụng để nhân viên nắm rõ khi thao tác.</p>
+<p class="lead"><i>Cập nhật: 26/10/2026</i></p>
+
+<h2>1. Màn hình "Phiếu Gửi Hàng" (Tạo đơn)</h2>
+<p><b>Mục đích:</b> tạo đơn hàng mới, lưu nháp, hoặc cập nhật cước cho đơn báo giá sau.</p>
+<h3>Quy tắc khi tạo đơn</h3>
+<ul>
+<li><b>Chi nhánh gửi</b> = chi nhánh đang đăng nhập — <b>khóa cứng</b>, không đổi được.</li>
+<li><b>Ngày gửi</b> tự điền hôm nay. <b>Ngày giao dự kiến (ngày nhận)</b> cũng được điền sẵn, nhưng <b>sửa được</b> — dùng khi lễ/Tết, khách chấp nhận chờ hàng lâu hơn.</li>
+<li><b>Tìm khách:</b> gõ <b>tên HOẶC số điện thoại đều ở ô "Họ tên"</b> — hệ thống gợi ý khách khớp cả tên lẫn số.</li>
+<li><b>Chọn khách từ gợi ý</b> → ô Số điện thoại bị <b>khóa</b> (tránh tạo khách trùng). Muốn người khác → bấm "✕ Chọn khách khác".</li>
+<li><b>Cảnh báo trùng</b> hiện ngay khi gõ: nếu trùng tên hoặc trùng SĐT khách đã có → hệ thống nhắc chọn đúng người, hoặc ghi chú vào tên cho dễ phân biệt (vd "Bình Tamba"). <b>Đổi SĐT khách cũ phải vào màn Quản Lý Khách Hàng.</b></li>
+<li><b>Bắt buộc nhập:</b> Tên người gửi &amp; người nhận, Mặt hàng, Số kiện (≥ 1), Cước phí (trừ khi chọn <i>Miễn phí</i> hoặc <i>Báo giá sau</i>).</li>
+<li><b>Bảo quản (sao đặc biệt):</b> hệ thống <b>tự đánh sao theo giá trị hàng</b> — giá trị ≥ 5 triệu = ★ (Cao), ≥ 10 triệu = ★★ (Rất cao). Nhân viên có thể <b>chọn tay</b> để ghi đè. Hàng sao cao = cần bảo quản kỹ, hiện nổi bật ở danh sách bốc xếp.</li>
+<li><b>Giao tận nơi</b> → bắt buộc nhập địa chỉ giao và <b>thanh toán trước</b>. <b>Địa chỉ giao sửa trực tiếp được</b> ngay trên form.</li>
+<li><b>Yêu cầu đối chiếu CCCD</b> → bắt buộc ghi thông tin vào ô Ghi chú.</li>
+<li><b>Các ô tick (tự đóng gói, cảnh báo rủi ro, xuất VAT, không khai giá trị, kiểm CCCD) và ô Ghi chú sẽ HIỆN TRÊN BILL IN</b> (phần "Lưu Ý"). Vì vậy tick/ghi đúng để in ra cho khách thấy.</li>
+<li><b>Nhập tiền theo đơn vị nghìn</b>: gõ <b>50</b> → tự thành <b>50.000</b>; gõ <b>120</b> → <b>120.000</b>. (Áp dụng cho mọi ô tiền.)</li>
+</ul>
+<h3>Mã đơn hàng (mã bill)</h3>
+<div class="rule">Cấu trúc: <b>[2 số thứ tự][mã chi nhánh][mã ngày]</b>. Ví dụ <b>01GLA11</b> = đơn số 01, chi nhánh GL, ngày A11. Trong cùng chuyến, số thứ tự tăng 01 → 02 → 03… Qua chuyến mới (sau khi Xuất Bến) → số về <b>01</b>, mã ngày tăng.</div>
+<div class="note">Hai nhân viên cùng lúc tạo đơn có thể thấy mã preview giống nhau — nhưng khi lưu, hệ thống tự cấp mã khác nhau, <b>không bao giờ trùng</b>.</div>
+<h3>Sau khi bấm "Tạo Hóa Đơn"</h3>
+<p>Đơn được tạo với trạng thái <b>"Chờ giao"</b> (chưa giao, chưa thu), có mã bill chính thức — sẵn sàng để đưa vào bốc xếp và giao hàng.</p>
+<h3>Lưu nháp &amp; đơn báo giá sau</h3>
+<ul>
+<li><b>Lưu nháp:</b> chỉ cần tên người gửi + người nhận. Đơn nháp chỉ <b>đúng chi nhánh tạo</b> mới sửa/xóa được.</li>
+<li><b>Đơn "Báo giá sau"</b> (chưa có cước): chỉ cập nhật được <b>đúng ô cước phí</b>, theo rule ngày/chi nhánh riêng.</li>
+</ul>
+
+<h2>2. Màn chi tiết đơn &amp; vòng đời đơn hàng</h2>
+<p>Mở 1 đơn để xem/thao tác. Trạng thái đi theo: <b>Chờ giao → Đã giao → Đã thanh toán</b>.</p>
+<h3>Hoàn tất giao hàng — 2 trường hợp</h3>
+<ul>
+<li><b>Đơn đã thanh toán trước</b> (hoặc miễn phí): chỉ cần xác nhận <b>đã giao</b>, không thu thêm.</li>
+<li><b>Đơn chưa thanh toán:</b> khi giao thì <b>vừa giao vừa thu</b> — chọn <b>Thanh toán đủ cước</b>, hoặc <b>Trả thiếu</b> (nhập số tiền thực thu + lý do thu thiếu).</li>
+<li><b>Ai giao được:</b> chỉ <b>chi nhánh NHẬN</b> và chỉ khi <b>hàng đã tới</b> (qua ngày xuất bến).</li>
+</ul>
+<h3>Thông tin phát hàng</h3>
+<p>Khi giao, chọn người nhận thực tế:</p>
+<ul>
+<li><b>Chính chủ</b> — đúng người nhận trên đơn.</li>
+<li><b>Nhận giùm</b> — người khác nhận thay (ghi rõ thông tin người nhận).</li>
+<li><b>Giao tận nhà</b> — shipper giao đến địa chỉ.</li>
+</ul>
+<h3>Xác nhận thanh toán (đơn thường đã giao)</h3>
+<div class="rule"><b>Chi nhánh nào cũng thu được</b>; doanh thu ghi về <b>chi nhánh người thu</b>. (Riêng đơn hoàn hàng: chỉ chi nhánh gốc thu — xem mục Hoàn hàng.)</div>
+<h3>Hủy đơn</h3>
+<div class="rule">Chỉ Quản lý/Quản trị, theo rule ngày &amp; chi nhánh. Sau khi xe đã xuất bến hoặc qua ngày lịch → <b>khóa sửa/hủy</b> (chỉ sys_admin bỏ qua được).</div>
+<h3>Hoàn hàng (chở về người gửi)</h3>
+<ul>
+<li>Chi nhánh <b>nhận</b> bấm <b>"Hoàn hàng"</b> (khi hàng đã tới) → đơn chuyển trạng thái, chở về chi nhánh gốc.</li>
+<li>Chi nhánh <b>gốc</b> bấm <b>"Xác nhận đã hoàn hàng"</b> khi hàng về tới.</li>
+<li>Sau đó bấm <b>"Thu tiền hoàn"</b> — <b>chỉ chi nhánh gốc</b> thu được. Tiền thu = <b>cước đi + cước hoàn (về)</b>.</li>
+<li>Trong lúc chở về, đơn hiện ở <b>Danh Sách Bốc Xếp của chi nhánh chở về</b>.</li>
+</ul>
+<h3>Tiêu hủy</h3>
+<div class="rule">Chỉ áp dụng cho đơn <b>đã thanh toán</b> (không còn nợ). Hàng bỏ tại chi nhánh, không chở về. Ghi rõ lý do + chi nhánh tiêu hủy.</div>
+<h3>In bill</h3>
+<ul>
+<li><b>In 2 bản</b> (khách giữ + chành xe giữ) có ô ký giao/ký nhận, kèm watermark chống giả.</li>
+<li><b>In lại bill giao (1 bản)</b> — bấm được <b>bất cứ lúc nào khi khách cần</b> (vd khách làm mất, cần bản khác).</li>
+</ul>
+
+<h2>3. Màn hình "Danh Sách Bốc Xếp"</h2>
+<p><b>Mục đích:</b> theo dõi xe hôm đó chở những đơn nào, nhập số kiện Trong/Ngoài, Hàng Ghép, và Xuất Bến.</p>
+<ul>
+<li>Danh sách lọc theo <b>chi nhánh đang giữ hàng</b> + <b>ngày</b>. Đổi ngày nhanh bằng nút <b>«</b> / <b>»</b>.</li>
+<li><b>Rê chuột (hover) vào chữ "Có" ở cột Giao tận nơi → hiện ngay địa chỉ giao</b>, không cần mở đơn.</li>
+<li><b>Nhập Trong / Ngoài</b>: tổng Trong + Ngoài phải <b>khớp Số kiện</b> của đơn (lệch sẽ cảnh báo).</li>
+<li><b>Hàng Ghép</b>: nhân viên tự điền mã ghép.</li>
+<li>Chỉ <b>nhân viên chi nhánh đang giữ hàng</b> mới sửa Trong/Ngoài/Hàng Ghép. <b>Qua ngày → khóa</b> danh sách của ngày cũ (sys_admin bỏ qua được).</li>
+<li><b>In danh sách</b>: <b>In</b>, <b>Tải Word (.doc)</b> hoặc <b>Tải Excel (.xls)</b>. Bản in tối ưu cột, lặp tiêu đề mỗi trang.</li>
+</ul>
+<h3>Xuất Bến &amp; tạo đơn sau giờ xuất bến</h3>
+<ul>
+<li><b>Xuất Bến:</b> chốt chuyến hiện tại, mã đơn kế tiếp bắt đầu lại từ <b>01</b> cho chuyến mới. Chỉ <b>đúng nhân viên chi nhánh đó</b>; chuyến phải <b>có ít nhất 1 đơn</b> và <b>đủ số kiện Trong/Ngoài</b> mới xuất bến được.</li>
+<li><b>Tạo đơn sau 16:30:</b> sau giờ này, khi bấm Tạo Hóa Đơn, hệ thống hỏi <b>"Xe đã xuất bến chưa?"</b>:
+  <ul>
+    <li><b>Tạo đơn hôm nay</b> — xe chưa chạy, đơn vào chuyến hôm nay.</li>
+    <li><b>Tạo đơn ngày mai</b> — xe đã chạy, đơn vào chuyến mai (tự xuất bến + reset mã).</li>
+  </ul></li>
+<li>Có <b>nhắc 16:40</b> để bấm Xuất Bến chốt chuyến &amp; reset mã cho ngày mới.</li>
+<li>Đơn <b>hoàn hàng</b> hiện ở Danh Sách Bốc Xếp của <b>chi nhánh chở về</b>.</li>
+</ul>
+
+<h2>4. Màn hình "Tổng Hợp Đơn Hàng"</h2>
+<p><b>Mục đích:</b> tra cứu toàn bộ đơn của chi nhánh.</p>
+<ul>
+<li>Gom đơn theo <b>chi nhánh GỐC</b> (nơi tạo đơn) — áp dụng cho mọi trạng thái, kể cả hoàn hàng/tiêu hủy.</li>
+<li><b>Bộ lọc:</b> Mã đơn, SĐT khách (gửi hoặc nhận), Trạng thái giao, Trạng thái thanh toán, Ngày gửi, Ngày giao, và "Chỉ đơn giao tận nhà chưa giao".</li>
+<li>Đơn <b>đã hủy</b> được ẩn mặc định, trừ khi chọn lọc Trạng thái giao = "Đã hủy".</li>
+</ul>
+
+<h2>5. Màn hình "Quản Lý Khách Hàng"</h2>
+<ul>
+<li>Thêm / sửa khách hàng, địa chỉ, nhiều số điện thoại.</li>
+<li><b>Đổi số điện thoại khách:</b> hệ thống <b>thêm số mới</b> và <b>hạ số cũ thành "số cũ"</b> — <b>không xóa</b>, để giữ nguyên các đơn cũ đang tham chiếu. Có ghi lịch sử (audit).</li>
+<li><b>Blacklist</b> khách (kèm lý do) — khi tạo đơn sẽ hiện cảnh báo ⚠️.</li>
+<li>Xem <b>lịch sử thay đổi</b> của từng khách.</li>
+</ul>
+
+<h2>6. Màn hình "Quản Lý Doanh Thu"</h2>
+<ul>
+<li><b>Doanh thu = tổng số tiền ĐÃ THU</b>, gom theo <b>chi nhánh thu</b> + <b>ngày thu</b> (không phải theo chi nhánh tạo đơn hay cước gốc).</li>
+<li>Lọc theo <b>Ngày / Tháng / Năm</b>, tab chi nhánh; nút <b>«</b> / <b>»</b> chuyển ngày nhanh.</li>
+<li><b>Chi tiết doanh thu</b>: xem từng khoản + tổng theo người thu.</li>
+</ul>
+<h3>Phiếu chi (chi phí)</h3>
+<ul>
+<li><b>Chi theo ngày:</b> chi phí phát sinh trong ngày (xăng xe, ăn uống, lặt vặt…).</li>
+<li><b>Chi theo tháng:</b> chi phí cố định hằng tháng (lương nhân viên, tiền thuê văn phòng…).</li>
+<li>Mỗi phiếu chi gắn <b>danh mục chi</b> để phân loại. Chỉ Quản lý/Quản trị, đúng chi nhánh mới thêm/sửa. Xóa là <b>xóa mềm</b> (vẫn lưu để audit).</li>
+</ul>
+<h3>Xem theo Năm &amp; nhắc chốt sổ</h3>
+<ul>
+<li>Khi xem doanh thu theo <b>Năm</b>, có mục <b>chi phí gom theo danh mục</b> — biết cả năm chi vào những khoản gì.</li>
+<li><b>Khóa sổ tháng:</b> chốt số liệu tháng. <b>Hệ thống nhắc chốt sổ</b> khi qua tháng mới (nhắc cập nhật/khóa sổ tháng trước). Sau khi khóa, chỉ sys_admin mới nhập được vào tháng đó.</li>
+</ul>
+<div class="note">Đơn hoàn hàng / tiêu hủy KHÔNG bị loại khỏi doanh thu — chỉ đơn <b>đã hủy</b> mới không tính.</div>
+
+<h2>7. Màn hình "Công Nợ"</h2>
+<div class="rule">Nhân viên (member) <b>không có quyền</b> vào màn này.</div>
+<ul>
+<li>Gom nợ theo <b>người NHẬN</b> (nếu đơn không có người nhận thì theo người gửi).</li>
+<li><b>Số nợ mỗi đơn</b> = (cước đi + cước hoàn) − đã thu, cho các đơn <b>đã giao</b> hoặc <b>hoàn hàng</b> mà chưa trả đủ.</li>
+<li>Đơn "Báo giá sau" chỉ hiện cờ nhắc, chưa tính tiền.</li>
+<li>Màn này chỉ để <b>xem</b>; muốn thu tiền phải vào <b>chi tiết đơn</b>.</li>
+</ul>
+
+<h2>8. Quy ước chung toàn hệ thống</h2>
+<ul>
+<li><b>Bấm vào mã đơn</b> (ở bất kỳ danh sách nào) → <b>mở chi tiết đơn</b> đó.</li>
+<li><b>Bấm "Quay lại"</b> → trở về <b>đúng trang/màn trước đó</b> (vd mở đơn từ Bốc Xếp thì quay lại về Bốc Xếp).</li>
+<li><b>Đơn tạo ở chi nhánh nào thì nằm ở tab chi nhánh đó</b> (trong Tổng Hợp Đơn Hàng).</li>
+<li><b>Lịch sử chỉnh sửa (Audit):</b> mỗi đơn / khách / phiếu chi đều lưu lại <b>ai làm gì, lúc nào</b> (tạo, sửa, hủy, giao hàng, thu tiền, hoàn hàng…) — xem ở phần lịch sử dưới chi tiết.</li>
+<li><b>Nhập tiền theo đơn vị nghìn</b>: mọi ô tiền, gõ 5 → 5.000, 50 → 50.000, 500 → 500.000.</li>
+<li><b>Chống bấm nhiều lần:</b> các nút ghi dữ liệu (Tạo đơn, Giao hàng, Thu tiền, Xuất Bến, Khóa sổ…) tự <b>khóa + hiện "⏳ Đang xử lý…"</b> sau khi bấm → không tạo dữ liệu rác dù bấm nhanh nhiều lần.</li>
+<li><b>Nhắc nhở hằng ngày:</b>
+  <ul>
+    <li><b>16:00</b> — nhắc kiểm tra Danh Sách Bốc Xếp (Trong/Ngoài/Hàng ghép) trước khi xe chạy.</li>
+    <li><b>16:40</b> — nhắc bấm Xuất Bến để chốt chuyến &amp; reset mã cho ngày mới.</li>
+  </ul>
+  (Chỉ hiện với người đang mở app trước mốc giờ; sau 18:00 không nhắc nữa.)</li>
+<li><b>Tự đồng bộ:</b> khi một người tạo/sửa đơn, thu tiền… máy người khác <b>tự cập nhật</b> sau vài giây, không cần tải lại trang.</li>
+</ul>
+
+<p style="margin-top:24pt;color:#999;font-size:9pt;">— Hết — Vận Tải Hoàn Cầu · Sài Gòn – Gia Lai —</p>
+
+</div>
+</body>
+</html>

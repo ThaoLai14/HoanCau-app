@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+# File SQL migration: giữ trên máy để chạy tay trong Supabase, KHÔNG đẩy lên GitHub.
+*.sql
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
